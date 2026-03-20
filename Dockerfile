@@ -28,10 +28,10 @@ COPY --from=frontend-build /frontend/dist frontend/dist/
 RUN useradd --create-home appuser
 USER appuser
 
-# Default: Foundry adapter mode (port 8088)
-ENV RUN_MODE=foundry
-ENV PORT=8088
+# Default: Web mode (port 8000), override with RUN_MODE=foundry for Foundry adapter
+ENV RUN_MODE=web
+ENV PORT=8000
 
-EXPOSE 8088
+EXPOSE 8000
 
 CMD ["python", "-m", "profile_agent"]

@@ -1,0 +1,81 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag (default: git SHA)"
+        required: false
+        type: string
+
+permissions:
+  id-token: write   # OIDC federation
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ── 1. Deploy infrastructure (Bicep) ──────────────────────────
+      - name: Deploy infrastructure
+        uses: azure/arm-deploy@v2
+        id: infra
+        with:
+          resourceGroupName: ${{ env.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: >-
+            environment=dev
+            baseName=profileagent
+            imageTag=${{ inputs.image_tag || github.sha }}
+            entraTenantId=${{ secrets.ENTRA_TENANT_ID }}
+            entraClientId=${{ secrets.ENTRA_CLIENT_ID }}
+            entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET }}
+            azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT }}
+            azureOpenAiKey=${{ secrets.AZURE_OPENAI_KEY }}
+            azureOpenAiDeployment=${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+            foundryProjectEndpoint=${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          failOnStdErr: false
+
+      # ── 2. Build & push Docker image to ACR ───────────────────────
+      - name: Log in to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push image
+        run: |
+          IMAGE_TAG="${{ inputs.image_tag || github.sha }}"
+          IMAGE="${{ env.ACR_NAME }}.azurecr.io/profile-agent:${IMAGE_TAG}"
+          docker build -t "${IMAGE}" .
+          docker push "${IMAGE}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+      # ── 3. Update Container App revision ──────────────────────────
+      - name: Deploy Container App revision
+        run: |
+          az containerapp update \
+            --name profileagent-dev-app \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image "${{ env.IMAGE }}"
+
+      - name: Print app URL
+        run: |
+          echo "## 🚀 Deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Image:** \`${{ env.IMAGE }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**URL:** ${{ steps.infra.outputs.containerAppUrl }}" >> "$GITHUB_STEP_SUMMARY"

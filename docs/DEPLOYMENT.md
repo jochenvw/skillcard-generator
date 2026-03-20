@@ -331,3 +331,91 @@ az group delete --name $RESOURCE_GROUP --yes --no-wait
 # Remove the app registration
 az ad app delete --id $ENTRA_OBJECT_ID
 ```
+
+---
+
+## GitHub Actions CI/CD
+
+The repo includes two workflows:
+
+- **CI** (`.github/workflows/ci.yml`) — Lint, type check, and test on every PR and push to `main`.
+- **CD** (`.github/workflows/cd.yml`) — Deploy infrastructure and app to Azure on push to `main` or manual dispatch.
+
+### One-Time Setup: OIDC Federated Credentials
+
+GitHub Actions authenticates to Azure using **OIDC federation** (no secrets to rotate).
+
+#### 1. Create a service principal for GitHub Actions
+
+```powershell
+$SP = az ad sp create-for-rbac `
+    --name "github-skillcard-deployer" `
+    --role Contributor `
+    --scopes "/subscriptions/<subscription-id>/resourceGroups/$RESOURCE_GROUP" `
+    --query "{appId:appId, objectId:id, tenantId:tenant}" -o json | ConvertFrom-Json
+
+$GH_CLIENT_ID = $SP.appId
+$GH_TENANT_ID = $SP.tenantId
+```
+
+#### 2. Add federated credential for GitHub Actions
+
+```powershell
+$CREDENTIAL_BODY = @{
+    name = "github-main-branch"
+    issuer = "https://token.actions.githubusercontent.com"
+    subject = "repo:jochenvw/skillcard-generator:ref:refs/heads/main"
+    audiences = @("api://AzureADTokenExchange")
+} | ConvertTo-Json
+
+az ad app federated-credential create `
+    --id $GH_CLIENT_ID `
+    --parameters $CREDENTIAL_BODY
+```
+
+Also add one for the `dev` environment (used by the CD workflow):
+
+```powershell
+$CREDENTIAL_ENV = @{
+    name = "github-dev-environment"
+    issuer = "https://token.actions.githubusercontent.com"
+    subject = "repo:jochenvw/skillcard-generator:environment:dev"
+    audiences = @("api://AzureADTokenExchange")
+} | ConvertTo-Json
+
+az ad app federated-credential create `
+    --id $GH_CLIENT_ID `
+    --parameters $CREDENTIAL_ENV
+```
+
+#### 3. Grant AcrPush role (for Docker image push)
+
+```powershell
+$ACR_ID = az acr show --name $ACR_NAME --query id -o tsv
+
+az role assignment create `
+    --assignee $GH_CLIENT_ID `
+    --role AcrPush `
+    --scope $ACR_ID
+```
+
+#### 4. Configure GitHub repository secrets
+
+Go to **Settings → Secrets and variables → Actions** and add:
+
+| Secret | Value | Source |
+|---|---|---|
+| `AZURE_CLIENT_ID` | Service principal app ID | Step 1 (`$GH_CLIENT_ID`) |
+| `AZURE_TENANT_ID` | Azure AD tenant ID | Step 1 (`$GH_TENANT_ID`) |
+| `AZURE_SUBSCRIPTION_ID` | Your subscription ID | `az account show --query id -o tsv` |
+| `AZURE_RESOURCE_GROUP` | Resource group name | e.g., `rg-profileagent-dev` |
+| `ACR_NAME` | Container Registry name | e.g., `profileagentxyz` (without `.azurecr.io`) |
+| `ENTRA_TENANT_ID` | Tenant ID for app auth | Same as `AZURE_TENANT_ID` for single-tenant |
+| `ENTRA_CLIENT_ID` | App registration client ID | From section 2 (`$ENTRA_CLIENT_ID`) |
+| `ENTRA_CLIENT_SECRET` | App registration secret | From section 2 (`$ENTRA_CLIENT_SECRET`) |
+| `AZURE_OPENAI_ENDPOINT` | OpenAI resource endpoint | Azure Portal |
+| `AZURE_OPENAI_KEY` | OpenAI API key | Azure Portal |
+| `AZURE_OPENAI_DEPLOYMENT` | Model deployment name | e.g., `gpt-4o` |
+| `FOUNDRY_PROJECT_ENDPOINT` | Foundry endpoint (optional) | Leave empty if not using Foundry |
+
+Also create a GitHub **environment** called `dev` (Settings → Environments → New environment).
