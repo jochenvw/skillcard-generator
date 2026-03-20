@@ -1,0 +1,23 @@
+# Foundry agent metadata
+kind: agent
+metadata:
+  name: profile-interview-agent
+  version: 0.1.0
+  description: >
+    Conversational interview agent that discovers technical strengths
+    and generates collectible profile cards.
+spec:
+  runtime: python
+  framework: agent-framework
+  hosting:
+    adapter: azure-ai-agentserver-agentframework
+    port: 8088
+  capabilities:
+    - conversational-interview
+    - profile-synthesis
+    - image-generation
+  models:
+    - deployment: gpt-4o
+      purpose: conversation
+    - deployment: gpt-image-1.5
+      purpose: image-generation

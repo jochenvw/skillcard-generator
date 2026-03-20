@@ -1,0 +1,46 @@
+id: aspirations
+title: "Aspirations & Growth"
+purpose: >
+  Understand where the user wants to go — what role they aspire to,
+  what skills they want to develop, what kind of impact they want to have.
+  Aspirations reveal career trajectory and forward-looking identity.
+user_experience_goal: >
+  A thoughtful conversation about the future. Not career planning —
+  more like "what would the best version of your professional life look like?"
+opening_prompt: >
+  Let's shift to the future for a moment.
+
+  **What role or kind of work do you aspire to?** Not just a title —
+  what does the *work* look like day to day? What would you be doing
+  if you had complete freedom to choose?
+
+  And if you're already doing exactly what you want — what's the
+  next frontier you want to push into?
+follow_up_style: thoughtful_and_forward
+completion_criteria:
+  - "At least 1 aspiration articulated"
+  - "Distinction between short-term and long-term goals is clear"
+  - "Growth areas or skills to develop are identified"
+extraction_targets:
+  - aspirations
+  - growth_areas
+  - ideal_work_description
+  - impact_goals
+  - learning_goals
+validation_rules:
+  - "At least 1 aspiration or growth area stated"
+confirmation_required: true
+next_stage: collaboration
+retry_policy:
+  max_retries: 2
+  backoff_message: "Even a vague sense of direction — what would you like to be known for in 5 years?"
+max_turns_before_compaction: 8
+summarization_policy:
+  strategy: guided
+  preserve_examples: true
+  preserve_quotes: true
+  max_summary_tokens: 400
+profile_mapping_rules:
+  - source_field: aspirations
+    target_field: aspirations
+    mapping_type: append

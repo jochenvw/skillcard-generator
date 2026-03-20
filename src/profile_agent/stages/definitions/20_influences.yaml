@@ -1,0 +1,49 @@
+id: influences
+title: "Books, Talks & Quotes"
+purpose: >
+  Explore the intellectual influences that have shaped the user's thinking —
+  books, conference talks, articles, podcasts, quotes. These reveal depth
+  of thought and learning orientation.
+user_experience_goal: >
+  Like swapping book recommendations with someone equally nerdy. Warm,
+  enthusiastic, and genuinely interested in *why* something resonated.
+opening_prompt: >
+  Now I'm curious about the *ideas* that shaped you.
+
+  **What book, talk, article, or quote has genuinely changed how you think
+  or work?** The kind of thing where you find yourself referencing it
+  months or years later.
+follow_up_style: enthusiastic_and_probing
+completion_criteria:
+  - "At least 2 intellectual influences mentioned (books, talks, etc.)"
+  - "User has explained why each was meaningful"
+  - "Learning orientation signals extracted"
+extraction_targets:
+  - books
+  - talks_or_videos
+  - quotes
+  - key_ideas_absorbed
+  - learning_style_signals
+validation_rules:
+  - "At least 2 distinct influences mentioned"
+confirmation_required: true
+next_stage: proud_projects
+retry_policy:
+  max_retries: 2
+  backoff_message: "Could be a blog post, a YouTube talk, even a tweet thread — anything that stuck with you."
+max_turns_before_compaction: 8
+summarization_policy:
+  strategy: guided
+  preserve_examples: true
+  preserve_quotes: true
+  max_summary_tokens: 500
+profile_mapping_rules:
+  - source_field: books
+    target_field: influences
+    mapping_type: append
+  - source_field: talks_or_videos
+    target_field: influences
+    mapping_type: append
+  - source_field: quotes
+    target_field: influences
+    mapping_type: append

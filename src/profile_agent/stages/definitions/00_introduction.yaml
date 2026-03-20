@@ -1,0 +1,51 @@
+id: introduction
+title: "Welcome & Setup"
+purpose: >
+  Warmly welcome the user, set the tone for a reflective and playful interview,
+  explain what we're building together (a strengths card), and invite them to
+  upload a profile picture.
+user_experience_goal: >
+  The user should feel intrigued and at ease — like sitting down with a
+  thoughtful friend who's genuinely curious about them. Not an HR intake.
+opening_prompt: >
+  Hey! Welcome — I'm here to learn what makes you *you* as a technologist,
+  builder, and thinker. By the end of our conversation, I'll create a
+  personalized strengths card for you — think Pokémon card meets
+  professional profile, but actually fun.
+
+  Before we dive in, want to upload a profile picture? I'll use it as
+  inspiration for your card's portrait later. (Totally optional — we can
+  always do this at the end too.)
+
+  Ready? Let's start with something easy: **what's your name, and what do
+  you usually tell people you do?**
+follow_up_style: warm_and_curious
+completion_criteria:
+  - "User has provided their name"
+  - "User has given a brief description of what they do"
+  - "Photo upload has been offered (accepted or declined)"
+extraction_targets:
+  - display_name
+  - role_description
+  - initial_identity_signals
+  - photo_upload_status
+validation_rules:
+  - "display_name must not be empty"
+confirmation_required: false
+next_stage: heroes
+retry_policy:
+  max_retries: 1
+  backoff_message: "No worries — just your first name and what you'd tell someone at a coffee shop about what you do."
+max_turns_before_compaction: 6
+summarization_policy:
+  strategy: simple
+  preserve_examples: false
+  preserve_quotes: true
+  max_summary_tokens: 200
+profile_mapping_rules:
+  - source_field: display_name
+    target_field: identity.display_name
+    mapping_type: direct
+  - source_field: role_description
+    target_field: identity.title
+    mapping_type: direct

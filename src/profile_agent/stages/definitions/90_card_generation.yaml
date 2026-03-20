@@ -1,0 +1,49 @@
+id: card_generation
+title: "Card Generation"
+purpose: >
+  Synthesize the final archetype, abilities, and flavor text, then generate
+  the stylized strengths card image. This is the grand finale.
+user_experience_goal: >
+  Excitement and delight. The user should feel like they're unwrapping
+  a gift — seeing themselves reflected back in a creative, respectful,
+  and fun way.
+opening_prompt: >
+  Time for the fun part! 🎨
+
+  Based on everything you've shared, I'm going to create your
+  personalized strengths card. Give me a moment while I:
+
+  1. Figure out your archetype / class
+  2. Distill your top abilities
+  3. Craft some flavor text
+  4. Generate your card art
+
+  Hang tight — this is the best part...
+follow_up_style: excited_and_creative
+completion_criteria:
+  - "Archetype has been synthesized"
+  - "Abilities list has been generated"
+  - "Card image has been generated"
+  - "User has seen the final card"
+extraction_targets:
+  - archetype
+  - abilities
+  - flavor_text
+  - card_feedback
+validation_rules:
+  - "Card image generation completed successfully"
+confirmation_required: false
+next_stage: null
+retry_policy:
+  max_retries: 2
+  backoff_message: "The image generation hit a snag — let me try a different approach."
+max_turns_before_compaction: 4
+summarization_policy:
+  strategy: none
+  preserve_examples: false
+  preserve_quotes: false
+  max_summary_tokens: 200
+profile_mapping_rules:
+  - source_field: archetype
+    target_field: identity.archetype
+    mapping_type: direct

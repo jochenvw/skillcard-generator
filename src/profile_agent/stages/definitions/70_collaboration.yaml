@@ -1,0 +1,48 @@
+id: collaboration
+title: "Collaboration & Influence"
+purpose: >
+  Understand how the user works with others — their collaboration style,
+  how they influence decisions, how they handle stakeholders, and what
+  kind of team dynamics they thrive in.
+user_experience_goal: >
+  Feels like reflecting on "how you show up" in a team — insightful
+  rather than performative. Not a behavioral interview question.
+opening_prompt: >
+  Almost there — let's talk about how you work with people.
+
+  **Tell me you care about craftsmanship without telling me you care
+  about craftsmanship.** Just kidding (mostly).
+
+  But seriously — **how would your closest collaborators describe
+  your style?** Are you the one drawing on whiteboards? Writing the
+  RFC? Quietly fixing things? Rallying the team when things go sideways?
+follow_up_style: insightful_and_warm
+completion_criteria:
+  - "Collaboration style described"
+  - "Stakeholder interaction approach captured"
+  - "Team role / influence style identified"
+  - "At least 1 concrete example of collaboration"
+extraction_targets:
+  - collaboration_style
+  - influence_approach
+  - team_role
+  - stakeholder_skills
+  - conflict_resolution_signals
+  - communication_style
+validation_rules:
+  - "Collaboration style described in some form"
+confirmation_required: true
+next_stage: validation
+retry_policy:
+  max_retries: 2
+  backoff_message: "Think about the last time you worked on something with a team — what was your role, and how did you make things better?"
+max_turns_before_compaction: 8
+summarization_policy:
+  strategy: guided
+  preserve_examples: true
+  preserve_quotes: true
+  max_summary_tokens: 400
+profile_mapping_rules:
+  - source_field: collaboration_style
+    target_field: collaboration_style
+    mapping_type: direct

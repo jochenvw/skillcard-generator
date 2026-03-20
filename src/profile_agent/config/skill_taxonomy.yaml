@@ -1,0 +1,99 @@
+# Skill Taxonomy
+# Canonical list of the 19 skill dimensions used for profile scoring.
+# Each dimension has a human label, ID, and category grouping.
+
+dimensions:
+  - id: application_development
+    label: Application Development
+    category: engineering
+    description: Frontend, backend, full-stack, mobile, APIs, UI/UX implementation
+
+  - id: system_design
+    label: System Design
+    category: architecture
+    description: Architecture patterns, trade-offs, scalability, distributed systems
+
+  - id: cloud_design_patterns
+    label: Cloud Design Patterns
+    category: architecture
+    description: Cloud-native patterns, managed services, serverless, event-driven
+
+  - id: architecture_methods
+    label: Architecture Methods
+    category: architecture
+    description: DDD, event sourcing, CQRS, microservices, modular monolith
+
+  - id: data
+    label: Data Engineering
+    category: data
+    description: Data modeling, pipelines, analytics, ETL, warehousing
+
+  - id: relational_databases
+    label: Relational Databases
+    category: data
+    description: SQL, PostgreSQL, SQL Server, query optimization, transactions
+
+  - id: nosql
+    label: NoSQL
+    category: data
+    description: Document stores, key-value, wide-column, search engines
+
+  - id: graph_databases
+    label: Graph Databases
+    category: data
+    description: Neo4j, Gremlin, knowledge graphs, graph modeling
+
+  - id: containers_orchestration
+    label: Containers & Orchestration
+    category: infrastructure
+    description: Docker, Kubernetes, Helm, container patterns, service mesh
+
+  - id: infrastructure
+    label: Infrastructure & Platform
+    category: infrastructure
+    description: IaC, CI/CD, platform engineering, observability, SRE
+
+  - id: networking
+    label: Networking
+    category: infrastructure
+    description: Protocols, DNS, load balancing, CDN, service mesh
+
+  - id: security
+    label: Security
+    category: governance
+    description: AppSec, threat modeling, compliance, encryption
+
+  - id: identity
+    label: Identity & Access
+    category: governance
+    description: OAuth, OIDC, Entra ID, RBAC, federation, zero trust
+
+  - id: ai_ml_genai
+    label: AI / ML / GenAI
+    category: emerging
+    description: ML ops, LLM integration, prompt engineering, RAG, fine-tuning
+
+  - id: performance_optimization
+    label: Performance Optimization
+    category: engineering
+    description: Profiling, caching, load testing, optimization, benchmarking
+
+  - id: governance
+    label: Governance
+    category: governance
+    description: Standards, policies, architecture review, tech radar, ADRs
+
+  - id: software_engineering_craftsmanship
+    label: Software Craftsmanship
+    category: engineering
+    description: Testing, code quality, design patterns, refactoring, mentoring
+
+  - id: collaboration_influence
+    label: Collaboration & Influence
+    category: leadership
+    description: Team dynamics, knowledge sharing, community building, open source
+
+  - id: stakeholder_management
+    label: Stakeholder Management
+    category: leadership
+    description: Communication, alignment, expectation management, visibility

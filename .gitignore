@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# uv (lock file is committed for reproducible builds)
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Azure
+.azure/
+
+# Docker
+docker-compose.override.yml
+
+# Foundry local state
+.foundry/datasets/
+.foundry/evaluators/
+.foundry/results/
+
+# SQLite local database
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated assets
+generated_cards/
+
+# Chainlit (removed, but ignore if regenerated)
+.chainlit/
+
+# Frontend build output
+frontend/dist/
+
+# Local dev data (uploads, generated files, binary artifacts)
+local_assets/
+.files/

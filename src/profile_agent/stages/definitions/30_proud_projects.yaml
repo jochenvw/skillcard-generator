@@ -1,0 +1,52 @@
+id: proud_projects
+title: "Proudest Projects"
+purpose: >
+  Uncover the work the user is disproportionately proud of. These stories
+  reveal technical strengths, values, problem-solving style, and what
+  gives them energy.
+user_experience_goal: >
+  The user should feel like they're telling war stories to someone who
+  genuinely gets it — not presenting to a review board.
+opening_prompt: >
+  Okay, let's get into the good stuff.
+
+  **What project are you disproportionately proud of?** The one where you
+  light up talking about it — maybe because it was technically gnarly,
+  or because you made something genuinely better, or because you pulled
+  off something people said couldn't be done.
+
+  Tell me the story.
+follow_up_style: story_driven
+completion_criteria:
+  - "At least 1 detailed project story told"
+  - "Technical domain signals extracted"
+  - "Problem-solving approach identified"
+  - "What made the user proud is articulated"
+extraction_targets:
+  - project_descriptions
+  - technical_domains
+  - problem_solving_approach
+  - pride_drivers
+  - architecture_signals
+  - craftsmanship_signals
+validation_rules:
+  - "At least 1 project described with technical detail"
+  - "Pride driver is stated or inferable"
+confirmation_required: true
+next_stage: shower_thoughts
+retry_policy:
+  max_retries: 2
+  backoff_message: "Could be a side project, a work project, even something from school — anything where you thought 'yeah, I nailed that.'"
+max_turns_before_compaction: 10
+summarization_policy:
+  strategy: guided
+  preserve_examples: true
+  preserve_quotes: true
+  max_summary_tokens: 600
+profile_mapping_rules:
+  - source_field: project_descriptions
+    target_field: hero_projects
+    mapping_type: append
+  - source_field: technical_domains
+    target_field: domain_affinities
+    mapping_type: merge

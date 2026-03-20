@@ -1,0 +1,46 @@
+id: validation
+title: "Profile Review & Confirmation"
+purpose: >
+  Present the synthesized profile back to the user for review.
+  Let them correct, add, or refine before we generate the final card.
+  This is a critical accuracy checkpoint.
+user_experience_goal: >
+  The user should feel heard and see that the system actually understood
+  them. Corrections are welcomed — this is collaborative, not defensive.
+opening_prompt: >
+  Alright, I've been listening carefully — let me show you what I've
+  put together so far.
+
+  Here's my read on your strengths profile. Take a look and tell me:
+  - **What did I get right?**
+  - **What did I miss or get wrong?**
+  - **Anything you want to add or emphasize?**
+
+  This is your card — I want it to actually feel like *you*.
+follow_up_style: collaborative_and_receptive
+completion_criteria:
+  - "User has reviewed the profile summary"
+  - "User has confirmed accuracy OR provided corrections"
+  - "All corrections have been incorporated"
+extraction_targets:
+  - corrections
+  - additions
+  - emphasis_changes
+  - confirmation_status
+validation_rules:
+  - "User has explicitly confirmed or provided corrections"
+confirmation_required: true
+next_stage: card_generation
+retry_policy:
+  max_retries: 3
+  backoff_message: "Even a quick 'looks good' works — or tell me what to change."
+max_turns_before_compaction: 6
+summarization_policy:
+  strategy: simple
+  preserve_examples: false
+  preserve_quotes: false
+  max_summary_tokens: 300
+profile_mapping_rules:
+  - source_field: corrections
+    target_field: raw_signals
+    mapping_type: merge

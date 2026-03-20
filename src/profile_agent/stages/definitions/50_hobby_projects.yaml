@@ -1,0 +1,46 @@
+id: hobby_projects
+title: "Side Projects & Hobby Builds"
+purpose: >
+  Explore what the user builds on their own time — side projects,
+  weekend hacks, open-source contributions. Voluntary work reveals
+  true passion, learning orientation, and breadth/depth signals.
+user_experience_goal: >
+  Like chatting with a fellow maker at a hackathon. No judgment,
+  pure enthusiasm for building things.
+opening_prompt: >
+  Now tell me about the stuff you build when nobody's asking you to.
+
+  **What side projects or hobby builds have you worked on?**
+  Could be something you shipped, something half-finished on GitHub,
+  or something you're tinkering with right now. No wrong answers.
+follow_up_style: maker_enthusiasm
+completion_criteria:
+  - "At least 1 side project or hobby project described"
+  - "Technology choices captured"
+  - "Motivation for building it captured (learning, fun, solving a real problem)"
+extraction_targets:
+  - project_names
+  - technologies_used
+  - project_motivations
+  - completion_status
+  - learning_signals
+validation_rules:
+  - "At least 1 project mentioned"
+confirmation_required: true
+next_stage: aspirations
+retry_policy:
+  max_retries: 2
+  backoff_message: "Even something super small — a script, a bot, a tool you made for yourself. What have you tinkered with?"
+max_turns_before_compaction: 8
+summarization_policy:
+  strategy: guided
+  preserve_examples: true
+  preserve_quotes: false
+  max_summary_tokens: 400
+profile_mapping_rules:
+  - source_field: project_names
+    target_field: hobby_projects
+    mapping_type: append
+  - source_field: technologies_used
+    target_field: domain_affinities
+    mapping_type: merge

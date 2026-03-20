@@ -1,0 +1,46 @@
+id: shower_thoughts
+title: "Shower Thoughts & Flow States"
+purpose: >
+  Discover what technical or intellectual problems consume the user's mind —
+  what they think about in the shower, what makes them lose track of time.
+  This reveals intrinsic motivation and deep interests.
+user_experience_goal: >
+  Playful and introspective. The user should feel permission to be nerdy
+  and honest about what genuinely fascinates them.
+opening_prompt: >
+  Here's one I love asking:
+
+  **What sort of technical problem makes you completely lose track of time?**
+  The kind where you look up and realize it's 2am and you forgot to eat.
+  Or what do you think about in the shower — the problem that keeps
+  running in the back of your mind?
+follow_up_style: playful_and_deep
+completion_criteria:
+  - "At least 1 flow-state domain identified"
+  - "Intrinsic motivation signals captured"
+  - "Distinction between 'have to do' and 'love to do' is clear"
+extraction_targets:
+  - flow_state_domains
+  - intrinsic_motivations
+  - recurring_fascinations
+  - deep_interest_signals
+validation_rules:
+  - "At least 1 concrete example of a flow-state problem"
+confirmation_required: true
+next_stage: hobby_projects
+retry_policy:
+  max_retries: 2
+  backoff_message: "Think about the last time you fell down a rabbit hole voluntarily — what was the topic?"
+max_turns_before_compaction: 8
+summarization_policy:
+  strategy: guided
+  preserve_examples: true
+  preserve_quotes: true
+  max_summary_tokens: 400
+profile_mapping_rules:
+  - source_field: flow_state_domains
+    target_field: shower_thoughts
+    mapping_type: append
+  - source_field: intrinsic_motivations
+    target_field: values
+    mapping_type: append

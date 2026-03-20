@@ -1,0 +1,10 @@
+# Agent metadata for Azure AI Foundry deployment
+name: profile-interview-agent
+description: >
+  An AI-powered interview agent that discovers a person's unique technical strengths
+  through conversational exploration and generates a personalized collectible-style
+  strengths profile card.
+version: 0.1.0
+runtime: python
+entry_point: profile_agent.app:main
+port: 8088

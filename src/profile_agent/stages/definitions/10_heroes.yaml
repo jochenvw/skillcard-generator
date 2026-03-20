@@ -1,0 +1,47 @@
+id: heroes
+title: "Heroes & Role Models"
+purpose: >
+  Discover who the user admires — technically, intellectually, or personally —
+  and why. Heroes reveal values, aspirations, and the qualities the user
+  gravitates toward.
+user_experience_goal: >
+  A reflective, story-driven conversation about influence and admiration.
+  The user should feel like they're sharing something personal, not filling
+  out a form.
+opening_prompt: >
+  Let's talk about the people who've shaped how you think.
+
+  **Who are your heroes — the people you'd love to have a long dinner conversation
+  with?** They can be famous, obscure, alive or not, technical or otherwise.
+  And more importantly — *what is it about them* that pulls you in?
+follow_up_style: reflective
+completion_criteria:
+  - "At least 2 heroes or role models mentioned"
+  - "For each, the user has articulated WHY they admire them"
+  - "Value signals have been extracted (e.g. craftsmanship, systems thinking, empathy)"
+extraction_targets:
+  - heroes_list
+  - admiration_reasons
+  - value_signals
+  - aspiration_signals
+validation_rules:
+  - "At least 2 distinct heroes mentioned"
+  - "Each hero has a stated reason for admiration"
+confirmation_required: true
+next_stage: influences
+retry_policy:
+  max_retries: 2
+  backoff_message: "Even just one person who's influenced how you think — could be a colleague, author, or public figure."
+max_turns_before_compaction: 8
+summarization_policy:
+  strategy: guided
+  preserve_examples: true
+  preserve_quotes: true
+  max_summary_tokens: 500
+profile_mapping_rules:
+  - source_field: heroes_list
+    target_field: influences
+    mapping_type: append
+  - source_field: value_signals
+    target_field: values
+    mapping_type: append
