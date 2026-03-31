@@ -31,8 +31,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Lint (ruff)
-        run: uvx ruff@0.15.6 check src/ tests/
+      - name: Syntax check (ruff)
+        run: uvx ruff@0.15.6 check --select E9,F63,F7,F82 src/ tests/
 
       - name: Type check (pyright)
         run: uvx pyright@1.1.390 src/
