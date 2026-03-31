@@ -11,17 +11,20 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install dependencies directly (no build step needed)
+# Install project + deps in one layer, then clean up
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/
-RUN uv pip install --system --no-cache . && rm -f /usr/local/bin/uv
+RUN uv pip install --system --no-cache . \
+    && rm -f /usr/local/bin/uv \
+    && rm -rf /root/.cache /tmp/* \
+    && find /usr/local/lib/python3.12/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; true
 
 # Copy built frontend
 COPY --from=frontend-build /build/dist frontend/dist/
 
 # Non-root user
-RUN useradd --create-home appuser
+RUN useradd --no-log-init --create-home appuser
 USER appuser
 
 ENV RUN_MODE=web
