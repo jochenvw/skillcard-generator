@@ -44,28 +44,9 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # ── 1. Deploy infrastructure (Bicep) ──────────────────────────
-      #    Uses imageTag=latest as a placeholder — the Container App
-      #    revision is updated with the real image in step 3.
-      - name: Deploy infrastructure
-        uses: azure/arm-deploy@v2
-        id: infra
-        with:
-          resourceGroupName: ${{ env.AZURE_RESOURCE_GROUP }}
-          template: infra/main.bicep
-          parameters: >-
-            environment=dev
-            baseName=profileagent
-            imageTag=latest
-            foundryProjectEndpoint=${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
-            entraTenantId=${{ secrets.ENTRA_TENANT_ID || '' }}
-            entraClientId=${{ secrets.ENTRA_CLIENT_ID || '' }}
-            entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET || '' }}
-            azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT || '' }}
-            azureOpenAiKey=${{ secrets.AZURE_OPENAI_KEY || '' }}
-          failOnStdErr: false
-
-      # ── 2. Build & push Docker image to ACR ───────────────────────
+      # ── 1. Build & push Docker image to ACR first ─────────────────
+      #    Must happen before Bicep so the image exists when
+      #    Container Apps references it.
       - name: Log in to ACR
         run: |
           ACR_LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
@@ -79,13 +60,24 @@ jobs:
           docker push "${IMAGE}"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
-      # ── 3. Update Container App with the real image ────────────────
-      - name: Deploy Container App revision
-        run: |
-          az containerapp update \
-            --name profileagent-dev-app \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image "${{ env.IMAGE }}"
+      # ── 2. Deploy infrastructure (Bicep) ──────────────────────────
+      - name: Deploy infrastructure
+        uses: azure/arm-deploy@v2
+        id: infra
+        with:
+          resourceGroupName: ${{ env.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: >-
+            environment=dev
+            baseName=profileagent
+            imageTag=${{ steps.tag.outputs.value }}
+            foundryProjectEndpoint=${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+            entraTenantId=${{ secrets.ENTRA_TENANT_ID || '' }}
+            entraClientId=${{ secrets.ENTRA_CLIENT_ID || '' }}
+            entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET || '' }}
+            azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT || '' }}
+            azureOpenAiKey=${{ secrets.AZURE_OPENAI_KEY || '' }}
+          failOnStdErr: false
 
       - name: Print app URL
         run: |
