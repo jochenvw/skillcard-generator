@@ -44,13 +44,12 @@ jobs:
             environment=dev
             baseName=profileagent
             imageTag=${{ inputs.image_tag || github.sha }}
-            entraTenantId=${{ secrets.ENTRA_TENANT_ID }}
-            entraClientId=${{ secrets.ENTRA_CLIENT_ID }}
-            entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET }}
-            azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT }}
-            azureOpenAiKey=${{ secrets.AZURE_OPENAI_KEY }}
-            azureOpenAiDeployment=${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
             foundryProjectEndpoint=${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+            entraTenantId=${{ secrets.ENTRA_TENANT_ID || '' }}
+            entraClientId=${{ secrets.ENTRA_CLIENT_ID || '' }}
+            entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET || '' }}
+            azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT || '' }}
+            azureOpenAiKey=${{ secrets.AZURE_OPENAI_KEY || '' }}
           failOnStdErr: false
 
       # ── 2. Build & push Docker image to ACR ───────────────────────

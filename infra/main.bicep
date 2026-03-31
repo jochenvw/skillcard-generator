@@ -19,28 +19,28 @@ param baseName string = 'profileagent'
 @description('Container image tag')
 param imageTag string = 'latest'
 
-@description('Entra ID tenant ID')
-param entraTenantId string
+@description('Azure AI Foundry project endpoint (primary AI backend)')
+param foundryProjectEndpoint string
 
-@description('Entra ID client ID for the web app')
-param entraClientId string
+@description('Entra ID tenant ID (leave empty to disable web UI auth)')
+param entraTenantId string = ''
 
-@secure()
-@description('Entra ID client secret')
-param entraClientSecret string
-
-@description('Azure OpenAI endpoint')
-param azureOpenAiEndpoint string
+@description('Entra ID client ID for the web app (leave empty to disable web UI auth)')
+param entraClientId string = ''
 
 @secure()
-@description('Azure OpenAI API key')
-param azureOpenAiKey string
+@description('Entra ID client secret (leave empty to disable web UI auth)')
+param entraClientSecret string = ''
+
+@description('Azure OpenAI endpoint (optional — only needed for direct OpenAI access instead of Foundry)')
+param azureOpenAiEndpoint string = ''
+
+@secure()
+@description('Azure OpenAI API key (optional — only needed for direct OpenAI access instead of Foundry)')
+param azureOpenAiKey string = ''
 
 @description('Azure OpenAI deployment name')
 param azureOpenAiDeployment string = 'gpt-4o'
-
-@description('Azure AI Foundry project endpoint')
-param foundryProjectEndpoint string = ''
 
 // ─── Variables ─────────────────────────────────────────────────────
 var uniqueSuffix = uniqueString(resourceGroup().id, baseName)

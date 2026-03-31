@@ -1,14 +1,14 @@
-// Key Vault — securely stores secrets
+// Key Vault — securely stores secrets (only provisions secrets when values are provided)
 
 param location string
 param resourcePrefix string
 param managedIdentityPrincipalId string
 
 @secure()
-param entraClientSecret string
+param entraClientSecret string = ''
 
 @secure()
-param azureOpenAiKey string
+param azureOpenAiKey string = ''
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: '${resourcePrefix}-kv'
@@ -36,7 +36,7 @@ resource kvSecretsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource entraSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource entraSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(entraClientSecret)) {
   parent: keyVault
   name: 'entra-client-secret'
   properties: {
@@ -44,7 +44,7 @@ resource entraSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource openaiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource openaiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(azureOpenAiKey)) {
   parent: keyVault
   name: 'azure-openai-key'
   properties: {
