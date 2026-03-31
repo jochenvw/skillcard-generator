@@ -43,9 +43,13 @@ def create_fastapi_app() -> FastAPI:
     from profile_agent.api.uploads import router as uploads_router
     app.include_router(uploads_router, prefix="/api")
 
-    # Streaming chat API (AI SDK Data Stream Protocol)
+    # Stateless streaming chat API (AI SDK Data Stream Protocol)
     from profile_agent.api.chat import router as chat_router
     app.include_router(chat_router, prefix="/api")
+
+    # Legacy stateful chat API (kept for backward compatibility)
+    from profile_agent.api.chat_legacy import router as chat_legacy_router
+    app.include_router(chat_legacy_router, prefix="/api")
 
     # Serve React frontend (built static files)
     import os

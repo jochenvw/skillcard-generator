@@ -9,6 +9,7 @@ interface ChatPanelProps {
   onSendMessage: (text: string) => void;
   sessionId: string;
   onImageUploaded?: () => void;
+  onPhotoSelected?: (base64: string) => void;
   cardImageSrc?: string | null;
   cardData?: CardData | null;
 }
@@ -26,6 +27,7 @@ export function ChatPanel({
   onSendMessage,
   sessionId,
   onImageUploaded,
+  onPhotoSelected,
   cardImageSrc,
   cardData,
 }: ChatPanelProps) {

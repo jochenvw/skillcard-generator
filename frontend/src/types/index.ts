@@ -46,3 +46,43 @@ export interface CardData {
   flavor_text: string;
   photo_url: string | null;
 }
+
+// --- Client-side session model (localStorage) ---
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface CompletedStage {
+  id: string;
+  title: string;
+  summary: string;
+  turnCount: number;
+}
+
+export interface Identity {
+  name: string | null;
+  role: string | null;
+  photoStatus: 'unknown' | 'uploaded' | 'skipped';
+}
+
+export interface ClientSession {
+  sessionId: string;
+  currentStageId: string;
+  completedStages: CompletedStage[];
+  currentStageMessages: ChatMessage[];
+  identity: Identity;
+  photoBase64: string | null;
+  panelData: PanelData;
+  cardData: CardData | null;
+  createdAt: string;
+}
+
+export interface StateUpdate {
+  currentStageId: string;
+  identity: Identity;
+  stageAdvanced: boolean;
+  stageSummary: string | null;
+  panelData: PanelData;
+}
