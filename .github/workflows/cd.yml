@@ -16,7 +16,6 @@ permissions:
 
 env:
   AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-  ACR_NAME: ${{ secrets.ACR_NAME }}
 
 jobs:
   deploy:
@@ -45,16 +44,13 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # ── 1. Build & push Docker image to ACR first ─────────────────
-      #    Must happen before Bicep so the image exists when
-      #    Container Apps references it.
-      - name: Log in to ACR
+      - name: Discover ACR and log in
         run: |
-          # ACR_NAME may be just the registry name or include .azurecr.io
-          ACR_SHORT_NAME=$(echo "${{ env.ACR_NAME }}" | sed 's/\.azurecr\.io$//')
-          ACR_LOGIN_SERVER="${ACR_SHORT_NAME}.azurecr.io"
-          az acr login --name "${ACR_SHORT_NAME}"
+          ACR_NAME=$(az acr list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[0].name" -o tsv)
+          ACR_LOGIN_SERVER=$(az acr list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[0].loginServer" -o tsv)
+          echo "ACR_NAME=${ACR_NAME}" >> "$GITHUB_ENV"
           echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER}" >> "$GITHUB_ENV"
-          echo "ACR_SHORT_NAME=${ACR_SHORT_NAME}" >> "$GITHUB_ENV"
+          az acr login --name "${ACR_NAME}"
 
       - name: Build and push image
         run: |
