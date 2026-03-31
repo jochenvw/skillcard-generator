@@ -11,6 +11,7 @@ interface ChatPanelProps {
   onPhotoSelected?: (base64: string) => void;
   cardImageSrc?: string | null;
   cardData?: CardData | null;
+  photoBase64?: string | null;
 }
 
 function getMessageText(message: UIMessage): string {
@@ -28,6 +29,7 @@ export function ChatPanel({
   onPhotoSelected,
   cardImageSrc,
   cardData,
+  photoBase64,
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [pendingImage, setPendingImage] = useState<File | null>(null);
@@ -142,7 +144,7 @@ export function ChatPanel({
 
         {cardData && (
           <div className="flex justify-center py-4">
-            <SkillCard data={cardData} />
+            <SkillCard data={cardData} photoBase64={photoBase64} />
           </div>
         )}
 

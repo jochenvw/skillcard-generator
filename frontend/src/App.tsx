@@ -1,152 +1,367 @@
-import { useMemo, useRef, useCallback, useState } from "react";
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { useRef, useCallback, useState } from "react";
 import type { UIMessage } from "ai";
-import { useSession } from "./hooks/useSession";
+import { useLocalSession } from "./hooks/useLocalSession";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { ChatPanel } from "./components/ChatPanel";
 import { SummaryPanel } from "./components/SummaryPanel";
-import type { PanelData, CardData } from "./types";
+import type { CardData, StateUpdate, ClientSession } from "./types";
 
-/**
- * Inner component that only mounts once sessionId is available.
- * This ensures the Chat instance is always created with a valid transport.
- */
-function InterviewChat({
-  sessionId,
-  panelData,
-  setPanelData,
-  initialMessages,
-}: {
-  sessionId: string;
-  panelData: PanelData | null;
-  setPanelData: (d: PanelData) => void;
-  initialMessages: UIMessage[];
-}) {
-  const imageUploadedRef = useRef(false);
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Build UIMessage objects from persisted ChatMessage array. */
+function toUIMessages(
+  msgs: { role: "user" | "assistant"; content: string }[],
+): UIMessage[] {
+  return msgs.map((m, i) => ({
+    id: `restored-${i}`,
+    role: m.role,
+    parts: [{ type: "text" as const, text: m.content }],
+  }));
+}
+
+/** Parse a single SSE `data:` payload into a typed event, or null. */
+function parseSSEData(
+  raw: string,
+): { type: string; id?: string; delta?: string; data?: unknown } | null {
+  if (raw === "[DONE]") return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+
+export default function App() {
+  const {
+    session,
+    loading,
+    updateSession,
+    handleStateUpdate,
+    resetSession,
+    exportSession,
+  } = useLocalSession();
+
+  // Display messages — seeded from currentStageMessages on first render
+  const [messages, setMessages] = useState<UIMessage[]>(() =>
+    session ? toUIMessages(session.currentStageMessages) : [],
+  );
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [cardData, setCardData] = useState<CardData | null>(
+    session?.cardData ?? null,
+  );
   const [cardImageSrc, setCardImageSrc] = useState<string | null>(null);
-  const [cardData, setCardData] = useState<CardData | null>(null);
 
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport({
-        api: `/api/sessions/${sessionId}/chat`,
-      }),
-    [sessionId]
+  // Track whether the next send should include hasImage
+  const hasImageRef = useRef(false);
+
+  // ── Send a chat message via the stateless endpoint ──────────────────────
+  const sendMessage = useCallback(
+    async (text: string) => {
+      if (!session || isStreaming) return;
+
+      const hasImage = hasImageRef.current;
+      hasImageRef.current = false;
+
+      // Optimistically add the user bubble
+      const userMsg: UIMessage = {
+        id: `u-${Date.now()}`,
+        role: "user",
+        parts: [{ type: "text" as const, text }],
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      setIsStreaming(true);
+
+      const payload = {
+        message: text,
+        currentStageId: session.currentStageId,
+        completedStageSummaries: session.completedStages.map((s) => ({
+          id: s.id,
+          summary: s.summary,
+        })),
+        currentStageMessages: session.currentStageMessages,
+        identity: {
+          name: session.identity.name || "",
+          role: session.identity.role || "",
+          photoStatus: session.identity.photoStatus,
+        },
+        hasImage,
+      };
+
+      const assistantMsgId = `a-${Date.now()}`;
+      let assistantText = "";
+      let receivedStateUpdate: StateUpdate | null = null;
+
+      // Add an empty assistant bubble we will fill progressively
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: assistantMsgId,
+          role: "assistant" as const,
+          parts: [{ type: "text" as const, text: "" }],
+        },
+      ]);
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          throw new Error(`Chat request failed (${res.status})`);
+        }
+
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        // Read SSE chunks
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Process complete events (separated by double-newline)
+          let boundary: number;
+          while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+            const block = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+
+            for (const line of block.split("\n")) {
+              if (!line.startsWith("data: ")) continue;
+              const evt = parseSSEData(line.slice(6));
+              if (!evt) continue;
+
+              switch (evt.type) {
+                case "text-delta": {
+                  assistantText += evt.delta ?? "";
+                  const snapshot = assistantText;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantMsgId
+                        ? {
+                            ...m,
+                            parts: [{ type: "text" as const, text: snapshot }],
+                          }
+                        : m,
+                    ),
+                  );
+                  break;
+                }
+                case "data-stateUpdate":
+                  receivedStateUpdate = evt.data as StateUpdate;
+                  break;
+                case "data-cardData": {
+                  const cd = evt.data as CardData;
+                  setCardData(cd);
+                  updateSession({ cardData: cd });
+                  break;
+                }
+                case "data-cardImage": {
+                  const img = evt.data as { url?: string; base64?: string };
+                  if (img.url) setCardImageSrc(img.url);
+                  else if (img.base64)
+                    setCardImageSrc(`data:image/png;base64,${img.base64}`);
+                  break;
+                }
+                // text-start / text-end are informational — no action needed
+              }
+            }
+          }
+        }
+
+        // Persist state after the stream completes
+        if (receivedStateUpdate) {
+          if (
+            (receivedStateUpdate as StateUpdate & { sessionReset?: boolean })
+              .sessionReset
+          ) {
+            resetSession();
+            setMessages([]);
+            setCardData(null);
+            setCardImageSrc(null);
+            return;
+          }
+          handleStateUpdate(receivedStateUpdate, assistantText, text);
+
+          // Card data may also be embedded in the state update
+          const embedded = (
+            receivedStateUpdate as StateUpdate & { cardData?: CardData }
+          ).cardData;
+          if (embedded && !cardData) {
+            setCardData(embedded);
+            updateSession({ cardData: embedded });
+          }
+        }
+      } catch (err) {
+        console.error("Chat stream error:", err);
+        const errText =
+          assistantText || "Sorry, something went wrong. Please try again.";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, parts: [{ type: "text" as const, text: errText }] }
+              : m,
+          ),
+        );
+      } finally {
+        setIsStreaming(false);
+      }
+    },
+    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData],
   );
 
-  const { messages, sendMessage, status } = useChat({
-    transport,
-    messages: initialMessages.length > 0 ? initialMessages : undefined,
-    onData: (part: { type: string; data?: unknown }) => {
-      if (part.type === "data-panelUpdate" && part.data) {
-        setPanelData(part.data as PanelData);
-      }
-      if (part.type === "data-cardImage" && part.data) {
-        const img = part.data as { url?: string; base64?: string };
-        if (img.url) {
-          setCardImageSrc(img.url);
-        } else if (img.base64) {
-          setCardImageSrc(`data:image/png;base64,${img.base64}`);
-        }
-      }
-      if (part.type === "data-cardData" && part.data) {
-        setCardData(part.data as CardData);
-      }
-      if (part.type === "data-sessionReset") {
-        // Reload to get a clean chat state
-        window.location.reload();
-      }
+  // ── Photo selected in ChatPanel ─────────────────────────────────────────
+  const handlePhotoSelected = useCallback(
+    (base64: string) => {
+      if (!session) return;
+      updateSession({
+        photoBase64: base64,
+        identity: { ...session.identity, photoStatus: "uploaded" },
+      });
     },
-  });
-
-  const chatLoading = status === "submitted" || status === "streaming";
-
-  const handleSendMessage = useCallback(
-    (text: string) => {
-      const hasImage = imageUploadedRef.current;
-      imageUploadedRef.current = false;
-      sendMessage(
-        { text },
-        hasImage ? { body: { hasImage: true } } : undefined,
-      );
-    },
-    [sendMessage],
+    [session, updateSession],
   );
 
   const handleImageUploaded = useCallback(() => {
-    imageUploadedRef.current = true;
+    hasImageRef.current = true;
   }, []);
 
+  // ── Import session from JSON file ───────────────────────────────────────
+  const handleImport = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const raw = await file.text();
+        const imported = JSON.parse(raw) as ClientSession;
+        if (!imported.sessionId || !imported.currentStageId) {
+          alert("Invalid session file.");
+          return;
+        }
+        updateSession(imported);
+        setMessages(toUIMessages(imported.currentStageMessages));
+        setCardData(imported.cardData);
+        setCardImageSrc(null);
+      } catch {
+        alert("Failed to parse session file.");
+      }
+    };
+    input.click();
+  }, [updateSession]);
+
+  // ── Reset session ───────────────────────────────────────────────────────
+  const handleReset = useCallback(() => {
+    if (!confirm("Reset session? All interview progress will be lost.")) return;
+    resetSession();
+    setMessages([]);
+    setCardData(null);
+    setCardImageSrc(null);
+  }, [resetSession]);
+
+  // ── Loading state ───────────────────────────────────────────────────────
+  if (loading || !session) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-400">
+        <div className="text-center space-y-3">
+          <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-sm">Initializing session…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main layout ─────────────────────────────────────────────────────────
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-200">
       {/* Left panel — Progress */}
       <aside className="w-64 shrink-0 border-r border-zinc-800 p-4 overflow-hidden hidden lg:block">
-        <ProgressPanel data={panelData} />
+        <ProgressPanel data={session.panelData} />
       </aside>
 
-      {/* Center panel — Chat */}
+      {/* Centre panel — Chat */}
       <main className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-zinc-800 px-4 py-3 flex items-center justify-between shrink-0">
           <h1 className="text-sm font-semibold text-zinc-300">
             Skill Card Interview
           </h1>
-          <span className="text-[10px] text-zinc-600 font-mono">
-            {sessionId.slice(0, 8)}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {/* Export */}
+            <button
+              onClick={exportSession}
+              title="Export session"
+              className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </button>
+
+            {/* Import */}
+            <button
+              onClick={handleImport}
+              title="Import session"
+              className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </button>
+
+            {/* Reset */}
+            <button
+              onClick={handleReset}
+              title="Reset session"
+              className="rounded-lg p-1.5 text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+              </svg>
+            </button>
+
+            <span className="text-[10px] text-zinc-600 font-mono ml-1">
+              {session.sessionId.slice(0, 8)}
+            </span>
+          </div>
         </header>
+
         <ChatPanel
           messages={messages}
-          isLoading={chatLoading}
-          onSendMessage={handleSendMessage}
+          isLoading={isStreaming}
+          onSendMessage={sendMessage}
           onImageUploaded={handleImageUploaded}
+          onPhotoSelected={handlePhotoSelected}
           cardImageSrc={cardImageSrc}
           cardData={cardData}
+          photoBase64={session.photoBase64}
         />
       </main>
 
       {/* Right panel — Summary */}
       <aside className="w-72 shrink-0 border-l border-zinc-800 p-4 overflow-hidden hidden xl:block">
-        <SummaryPanel data={panelData} />
+        <SummaryPanel
+          data={session.panelData}
+          photoBase64={session.photoBase64}
+        />
       </aside>
     </div>
-  );
-}
-
-export default function App() {
-  const { sessionId, panelData, setPanelData, initialMessages, loading, error } =
-    useSession();
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-400">
-        <div className="text-center space-y-3">
-          <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-sm">Initializing session...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !sessionId) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-zinc-950 text-red-400">
-        <div className="text-center space-y-2">
-          <p className="text-sm font-medium">Error</p>
-          <p className="text-xs text-zinc-500">
-            {error ?? "Failed to initialize session"}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <InterviewChat
-      sessionId={sessionId}
-      panelData={panelData}
-      setPanelData={setPanelData}
-      initialMessages={initialMessages}
-    />
   );
 }
