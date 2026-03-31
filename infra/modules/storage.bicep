@@ -4,9 +4,13 @@ param location string
 param uniqueSuffix string
 param managedIdentityPrincipalId string
 
+// Storage/ACR names: max 24 chars, lowercase alphanumeric only
+var storagePrefix = 'profag${take(uniqueSuffix, 10)}'
+var acrName = 'profagacr${take(uniqueSuffix, 10)}'
+
 // Azure Container Registry
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: 'profileagent${uniqueSuffix}'
+  name: acrName
   location: location
   sku: {
     name: 'Basic'
@@ -29,7 +33,7 @@ resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 // Storage Account for blobs (profile pictures, generated cards)
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: 'profileagent${uniqueSuffix}'
+  name: storagePrefix
   location: location
   sku: {
     name: 'Standard_LRS'
