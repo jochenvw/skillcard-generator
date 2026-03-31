@@ -7,7 +7,6 @@ interface ChatPanelProps {
   messages: UIMessage[];
   isLoading: boolean;
   onSendMessage: (text: string) => void;
-  sessionId: string;
   onImageUploaded?: () => void;
   onPhotoSelected?: (base64: string) => void;
   cardImageSrc?: string | null;
@@ -25,7 +24,6 @@ export function ChatPanel({
   messages,
   isLoading,
   onSendMessage,
-  sessionId,
   onImageUploaded,
   onPhotoSelected,
   cardImageSrc,

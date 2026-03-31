@@ -99,7 +99,6 @@ function InterviewChat({
           messages={messages}
           isLoading={chatLoading}
           onSendMessage={handleSendMessage}
-          sessionId={sessionId}
           onImageUploaded={handleImageUploaded}
           cardImageSrc={cardImageSrc}
           cardData={cardData}
