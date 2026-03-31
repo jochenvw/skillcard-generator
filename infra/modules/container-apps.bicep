@@ -66,7 +66,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
           env: [
             { name: 'RUN_MODE', value: 'web' }
-            { name: 'ENVIRONMENT', value: 'production' }
+            { name: 'ENVIRONMENT', value: 'prod' }
             { name: 'AZURE_CLIENT_ID', value: managedIdentityClientId }
             { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
             { name: 'AZURE_OPENAI_DEPLOYMENT', value: azureOpenAiDeployment }
