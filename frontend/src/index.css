@@ -5,6 +5,71 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* ── Compaction Indicator ─────────────────────────────────── */
+
+.compaction-terminal {
+  background: #0a0e14;
+  border-color: #0e7490;
+  box-shadow:
+    0 0 8px rgba(6, 182, 212, 0.15),
+    0 0 24px rgba(6, 182, 212, 0.08);
+  animation: compaction-glow 2s ease-in-out infinite;
+}
+
+@keyframes compaction-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 8px rgba(6, 182, 212, 0.15),
+      0 0 24px rgba(6, 182, 212, 0.08);
+  }
+  50% {
+    box-shadow:
+      0 0 12px rgba(6, 182, 212, 0.3),
+      0 0 36px rgba(6, 182, 212, 0.15);
+  }
+}
+
+.compaction-scanlines {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(6, 182, 212, 0.03) 2px,
+    rgba(6, 182, 212, 0.03) 4px
+  );
+}
+
+.compaction-pulse {
+  animation: compaction-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes compaction-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.compaction-bolt {
+  animation: compaction-bolt-flicker 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes compaction-bolt-flicker {
+  0% { opacity: 1; }
+  100% { opacity: 0.5; }
+}
+
+.compaction-blink {
+  animation: compaction-cursor-blink 0.8s step-end infinite;
+}
+
+@keyframes compaction-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.compaction-bar-glow {
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.4);
+}
+
 /* ── Nerdy / hacker aesthetic ─────────────────────────────────── */
 
 /* Blinking terminal cursor */

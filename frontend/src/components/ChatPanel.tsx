@@ -3,10 +3,12 @@ import type { UIMessage } from "ai";
 import type { CardData } from "../types";
 import { SkillCard } from "./SkillCard";
 import { WelcomeBanner } from "./WelcomeBanner";
+import { CompactionIndicator } from "./CompactionIndicator";
 
 interface ChatPanelProps {
   messages: UIMessage[];
   isLoading: boolean;
+  compacting?: boolean;
   onSendMessage: (text: string) => void;
   onImageUploaded?: () => void;
   onPhotoSelected?: (base64: string) => void;
@@ -25,6 +27,7 @@ function getMessageText(message: UIMessage): string {
 export function ChatPanel({
   messages,
   isLoading,
+  compacting,
   onSendMessage,
   onImageUploaded,
   onPhotoSelected,
@@ -157,6 +160,11 @@ export function ChatPanel({
         )}
 
         <div ref={messagesEndRef} />
+      </div>
+
+      {/* Compaction indicator — between messages and input */}
+      <div className="px-4 py-2">
+        <CompactionIndicator active={!!compacting} />
       </div>
 
       {/* Input */}

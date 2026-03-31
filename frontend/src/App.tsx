@@ -56,6 +56,7 @@ export default function App() {
     session?.cardData ?? null,
   );
   const [cardImageSrc, setCardImageSrc] = useState<string | null>(null);
+  const [compacting, setCompacting] = useState(false);
 
   // Track whether the next send should include hasImage
   const hasImageRef = useRef(false);
@@ -158,6 +159,9 @@ export default function App() {
                 }
                 case "data-stateUpdate":
                   receivedStateUpdate = evt.data as StateUpdate;
+                  if (receivedStateUpdate.stageAdvanced) {
+                    setCompacting(true);
+                  }
                   break;
                 case "data-cardData": {
                   const cd = evt.data as CardData;
@@ -184,6 +188,7 @@ export default function App() {
             (receivedStateUpdate as StateUpdate & { sessionReset?: boolean })
               .sessionReset
           ) {
+            setCompacting(false);
             resetSession();
             setMessages([]);
             setCardData(null);
@@ -191,6 +196,11 @@ export default function App() {
             return;
           }
           handleStateUpdate(receivedStateUpdate, assistantText, text);
+
+          // End compaction indicator after stage advance settles
+          if (receivedStateUpdate.stageAdvanced) {
+            setTimeout(() => setCompacting(false), 2500);
+          }
 
           // Card data may also be embedded in the state update
           const embedded = (
@@ -355,6 +365,7 @@ export default function App() {
         <ChatPanel
           messages={messages}
           isLoading={isStreaming}
+          compacting={compacting}
           onSendMessage={sendMessage}
           onImageUploaded={handleImageUploaded}
           onPhotoSelected={handlePhotoSelected}
@@ -369,6 +380,7 @@ export default function App() {
         <SummaryPanel
           data={session.panelData}
           photoBase64={session.photoBase64}
+          completedStages={session.completedStages}
         />
       </aside>
       {/* Version badge */}
