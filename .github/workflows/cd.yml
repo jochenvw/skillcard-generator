@@ -45,6 +45,8 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # ── 1. Deploy infrastructure (Bicep) ──────────────────────────
+      #    Uses imageTag=latest as a placeholder — the Container App
+      #    revision is updated with the real image in step 3.
       - name: Deploy infrastructure
         uses: azure/arm-deploy@v2
         id: infra
@@ -54,7 +56,7 @@ jobs:
           parameters: >-
             environment=dev
             baseName=profileagent
-            imageTag=${{ steps.tag.outputs.value }}
+            imageTag=latest
             foundryProjectEndpoint=${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
             entraTenantId=${{ secrets.ENTRA_TENANT_ID || '' }}
             entraClientId=${{ secrets.ENTRA_CLIENT_ID || '' }}
@@ -65,16 +67,19 @@ jobs:
 
       # ── 2. Build & push Docker image to ACR ───────────────────────
       - name: Log in to ACR
-        run: az acr login --name ${{ env.ACR_NAME }}
+        run: |
+          ACR_LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
+          az acr login --name ${{ env.ACR_NAME }}
+          echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER}" >> "$GITHUB_ENV"
 
       - name: Build and push image
         run: |
-          IMAGE="${{ env.ACR_NAME }}.azurecr.io/profile-agent:${{ steps.tag.outputs.value }}"
+          IMAGE="${{ env.ACR_LOGIN_SERVER }}/profile-agent:${{ steps.tag.outputs.value }}"
           docker build -t "${IMAGE}" .
           docker push "${IMAGE}"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
-      # ── 3. Update Container App revision ──────────────────────────
+      # ── 3. Update Container App with the real image ────────────────
       - name: Deploy Container App revision
         run: |
           az containerapp update \
