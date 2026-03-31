@@ -51,8 +51,19 @@ def create_fastapi_app() -> FastAPI:
     import os
     from pathlib import Path
 
-    frontend_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
-    if frontend_dist.exists():
+    # Check multiple possible locations for frontend dist
+    frontend_dist = None
+    candidates = [
+        Path(os.environ.get("FRONTEND_DIST", "")) if os.environ.get("FRONTEND_DIST") else None,
+        Path("/app/frontend/dist"),
+        Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist",
+    ]
+    for candidate in candidates:
+        if candidate and candidate.exists() and (candidate / "index.html").exists():
+            frontend_dist = candidate
+            break
+
+    if frontend_dist:
         from starlette.staticfiles import StaticFiles
         from starlette.responses import FileResponse
 
