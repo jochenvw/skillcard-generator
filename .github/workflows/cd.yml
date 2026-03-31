@@ -1,4 +1,4 @@
-name: Deploy to Azure
+name: CD - deploy app
 
 on:
   push:
