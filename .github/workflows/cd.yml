@@ -49,9 +49,12 @@ jobs:
       #    Container Apps references it.
       - name: Log in to ACR
         run: |
-          ACR_LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
-          az acr login --name ${{ env.ACR_NAME }}
+          # ACR_NAME may be just the registry name or include .azurecr.io
+          ACR_SHORT_NAME=$(echo "${{ env.ACR_NAME }}" | sed 's/\.azurecr\.io$//')
+          ACR_LOGIN_SERVER="${ACR_SHORT_NAME}.azurecr.io"
+          az acr login --name "${ACR_SHORT_NAME}"
           echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER}" >> "$GITHUB_ENV"
+          echo "ACR_SHORT_NAME=${ACR_SHORT_NAME}" >> "$GITHUB_ENV"
 
       - name: Build and push image
         run: |
