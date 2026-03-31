@@ -15,11 +15,16 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 # Copy dependency files first (Docker layer caching)
-COPY pyproject.toml ./
-RUN uv pip install --system --no-cache .
+COPY pyproject.toml uv.lock ./
+
+# Install dependencies only (not the project itself)
+RUN uv pip install --system --no-cache -r pyproject.toml
 
 # Copy source
 COPY src/ src/
+
+# Install the project itself
+RUN uv pip install --system --no-cache --no-deps .
 
 # Copy built frontend
 COPY --from=frontend-build /frontend/dist frontend/dist/
