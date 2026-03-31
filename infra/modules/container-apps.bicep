@@ -8,13 +8,9 @@ param managedIdentityClientId string
 param containerRegistryLoginServer string
 param logAnalyticsWorkspaceId string
 param appInsightsConnectionString string
-param cosmosAccountEndpoint string
-param storageAccountName string
 param keyVaultUri string
 param entraTenantId string
 param entraClientId string
-param azureOpenAiEndpoint string
-param azureOpenAiDeployment string
 param foundryProjectEndpoint string
 
 resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
@@ -68,11 +64,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'RUN_MODE', value: 'web' }
             { name: 'ENVIRONMENT', value: 'prod' }
             { name: 'AZURE_CLIENT_ID', value: managedIdentityClientId }
-            { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
-            { name: 'AZURE_OPENAI_DEPLOYMENT', value: azureOpenAiDeployment }
-            { name: 'COSMOS_ENDPOINT', value: cosmosAccountEndpoint }
-            { name: 'STORAGE_ACCOUNT_NAME', value: storageAccountName }
-            { name: 'STORAGE_CONTAINER', value: 'assets' }
             { name: 'ENTRA_TENANT_ID', value: entraTenantId }
             { name: 'ENTRA_CLIENT_ID', value: entraClientId }
             { name: 'KEY_VAULT_URI', value: keyVaultUri }

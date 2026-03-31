@@ -461,6 +461,42 @@ def _format_synthesis_for_display(synthesis_raw: str) -> str:
     return "\n".join(lines)
 
 
+# ── Stage summarization ──
+
+
+async def _generate_stage_summary(
+    stage_title: str,
+    stage_purpose: str,
+    messages: list[dict],
+    client: AsyncAzureOpenAI,
+    settings: Settings,
+) -> str:
+    """Generate a concise LLM summary of a completed stage's conversation."""
+    conversation_lines = [
+        f"{m.get('role', 'user').upper()}: {m.get('content', '')}"
+        for m in messages
+    ]
+    prompt = render_template(
+        "stage_summary",
+        stage_title=stage_title,
+        stage_purpose=stage_purpose,
+        conversation="\n".join(conversation_lines),
+    )
+    try:
+        resp = await client.chat.completions.create(
+            model=settings.effective_azure_openai_deployment,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_completion_tokens=200,
+        )
+        summary = (resp.choices[0].message.content or "").strip()
+        if summary:
+            return summary
+    except Exception:
+        logger.warning("Stage summary generation failed; using fallback", exc_info=True)
+    return f"Completed stage: {stage_title}."
+
+
 # ── Main stateless turn processor ──
 
 async def process_stateless_turn(
@@ -511,7 +547,9 @@ async def process_stateless_turn(
             yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": msg})}\n\n'
             yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
         else:
-            stage_summary = f"User fast-tracked from stage {current_stage_id}."
+            stage_summary = await _generate_stage_summary(
+                stage.title, stage.purpose, current_stage_messages, client, settings,
+            )
             completed_summaries = completed_summaries + [CompletedStageSummary(id=current_stage_id, summary=stage_summary)]
             completed_ids = [s.id for s in completed_summaries]
             current_stage_id = next_stage.id
@@ -737,9 +775,8 @@ async def process_stateless_turn(
     if stage.id == "introduction":
         missing = _intro_missing(identity)
         if not missing:
-            stage_summary = (
-                f"Intro complete: name={identity.name}, role captured, "
-                f"photo_status={identity.photo_status}."
+            stage_summary = await _generate_stage_summary(
+                stage.title, stage.purpose, current_stage_messages, client, settings,
             )
             completed_summaries = completed_summaries + [CompletedStageSummary(id=current_stage_id, summary=stage_summary)]
             completed_ids = [s.id for s in completed_summaries]
@@ -759,7 +796,9 @@ async def process_stateless_turn(
     effective_turns = turn_count + 1
     if not stage_advanced and effective_turns >= FAST_STAGE_HARD_TURN_LIMIT:
         if stage.next_stage is not None:
-            stage_summary = f"Auto-completed {current_stage_id} at fast-track turn budget."
+            stage_summary = await _generate_stage_summary(
+                stage.title, stage.purpose, current_stage_messages, client, settings,
+            )
             completed_summaries = completed_summaries + [CompletedStageSummary(id=current_stage_id, summary=stage_summary)]
             completed_ids = [s.id for s in completed_summaries]
             next_s = get_next_stage(current_stage_id)

@@ -33,7 +33,6 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [pendingImage, setPendingImage] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,30 +53,12 @@ export function ChatPanel({
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = input.trim();
-    if ((!text && !pendingImage) || isLoading || uploading) return;
+    if ((!text && !pendingImage) || isLoading) return;
 
     if (pendingImage) {
-      setUploading(true);
-      try {
-        const form = new FormData();
-        form.append("file", pendingImage);
-        const res = await fetch(`/api/sessions/${sessionId}/upload-picture`, {
-          method: "POST",
-          body: form,
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: "Upload failed" }));
-          alert(err.detail || "Upload failed");
-          return;
-        }
-        setPendingImage(null);
-        onImageUploaded?.();
-        onSendMessage(text || "I've uploaded my photo.");
-      } catch {
-        alert("Upload failed — please try again.");
-      } finally {
-        setUploading(false);
-      }
+      onImageUploaded?.();
+      onSendMessage(text || "I've uploaded my photo.");
+      setPendingImage(null);
     } else {
       onSendMessage(text);
     }
@@ -97,8 +78,17 @@ export function ChatPanel({
       return;
     }
     setPendingImage(file);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        onPhotoSelected?.(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+
     e.target.value = "";
-  }, []);
+  }, [onPhotoSelected]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -203,7 +193,7 @@ export function ChatPanel({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading || uploading}
+            disabled={isLoading}
             className="shrink-0 rounded-xl bg-zinc-800 border border-zinc-700 p-2.5 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 disabled:opacity-40 transition-colors"
             title="Upload profile photo"
           >
@@ -223,10 +213,10 @@ export function ChatPanel({
           />
           <button
             type="submit"
-            disabled={isLoading || uploading || (!input.trim() && !pendingImage)}
+            disabled={isLoading || (!input.trim() && !pendingImage)}
             className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-40 disabled:hover:bg-violet-600 transition-colors"
           >
-            {uploading ? "Uploading..." : "Send"}
+            Send
           </button>
         </form>
       </div>

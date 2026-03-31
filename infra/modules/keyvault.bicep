@@ -7,9 +7,6 @@ param managedIdentityPrincipalId string
 @secure()
 param entraClientSecret string = ''
 
-@secure()
-param azureOpenAiKey string = ''
-
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: '${resourcePrefix}-kv'
   location: location
@@ -41,14 +38,6 @@ resource entraSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty
   name: 'entra-client-secret'
   properties: {
     value: entraClientSecret
-  }
-}
-
-resource openaiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(azureOpenAiKey)) {
-  parent: keyVault
-  name: 'azure-openai-key'
-  properties: {
-    value: azureOpenAiKey
   }
 }
 

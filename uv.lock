@@ -499,15 +499,6 @@ wheels = [
 ]
 
 [[package]]
-name = "aiosqlite"
-version = "0.22.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4e/8a/64761f4005f17809769d23e518d915db74e6310474e733e3593cfc854ef1/aiosqlite-0.22.1.tar.gz", hash = "sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650", size = 14821, upload-time = "2025-12-23T19:25:43.997Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/b7/e3bf5133d697a08128598c8d0abc5e16377b51465a33756de24fa7dee953/aiosqlite-0.22.1-py3-none-any.whl", hash = "sha256:21c002eb13823fad740196c5a2e9d8e62f6243bd9e7e4a1f87fb5e44ecb4fceb", size = 17405, upload-time = "2025-12-23T19:25:42.139Z" },
-]
-
-[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -703,19 +694,6 @@ wheels = [
 ]
 
 [[package]]
-name = "azure-cosmos"
-version = "4.15.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "azure-core" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/a3/0474e622bf9676e3206d61269461ed16a05958363c254ea3b15af16219b2/azure_cosmos-4.15.0.tar.gz", hash = "sha256:be1cf49837c197d9da880ec47fe020a24d679075b89e0e1e2aca8d376b3a5a24", size = 2100744, upload-time = "2026-02-23T16:01:52.293Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/5f/b6e3d3ae16fa121fdc17e62447800d378b7e716cd6103c3650977a6c4618/azure_cosmos-4.15.0-py3-none-any.whl", hash = "sha256:83c1da7386bcd0df9a15c52116cc35012225d8a72d4f1379938b83ea5eb19fff", size = 424870, upload-time = "2026-02-23T16:01:54.514Z" },
-]
-
-[[package]]
 name = "azure-functions"
 version = "1.25.0b4"
 source = { registry = "https://pypi.org/simple" }
@@ -759,20 +737,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/91/cd/0136f0a52b5d8c351b7009478afa63db17cdcaa0d662288100a7c41996e9/azure_identity-1.26.0b2.tar.gz", hash = "sha256:bb218a6ac7aa7b7b4bc115e2b48aa757b426b41a30c3914b69962942e7769af3", size = 293772, upload-time = "2026-02-12T02:14:35.583Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e4/42/e5a373564989b150c9d5e9420172492c195b5e26c4989e84f64353ad315c/azure_identity-1.26.0b2-py3-none-any.whl", hash = "sha256:9b08baa7875cea1295442b4a9f0eae68848c39034d771fb218d79759ad68ec02", size = 197287, upload-time = "2026-02-12T02:14:37.293Z" },
-]
-
-[[package]]
-name = "azure-keyvault-secrets"
-version = "4.10.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "azure-core" },
-    { name = "isodate" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/97/e5/3074e581b6e8923c4a1f2e42192ea6f390bb52de3600c68baaaed529ef05/azure_keyvault_secrets-4.10.0.tar.gz", hash = "sha256:666fa42892f9cee749563e551a90f060435ab878977c95265173a8246d546a36", size = 129695, upload-time = "2025-06-16T22:52:20.986Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/26/94/7c902e966b28e7cb5080a8e0dd6bffc22ba44bc907f09c4c633d2b7c4f6a/azure_keyvault_secrets-4.10.0-py3-none-any.whl", hash = "sha256:9dbde256077a4ee1a847646671580692e3f9bea36bcfc189c3cf2b9a94eb38b9", size = 125237, upload-time = "2025-06-16T22:52:22.489Z" },
 ]
 
 [[package]]
@@ -2659,15 +2623,11 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-framework" },
-    { name = "aiosqlite" },
     { name = "azure-ai-agentserver-agentframework" },
     { name = "azure-ai-inference" },
     { name = "azure-ai-projects" },
-    { name = "azure-cosmos" },
     { name = "azure-identity" },
-    { name = "azure-keyvault-secrets" },
     { name = "azure-monitor-opentelemetry-exporter" },
-    { name = "azure-storage-blob" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -2697,15 +2657,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework", specifier = ">=0.1.0a1" },
-    { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "azure-ai-agentserver-agentframework", specifier = ">=0.1.0a1" },
     { name = "azure-ai-inference", specifier = ">=1.0.0b1" },
     { name = "azure-ai-projects", specifier = ">=1.0.0b1" },
-    { name = "azure-cosmos", specifier = ">=4.9.0" },
     { name = "azure-identity", specifier = ">=1.19.0" },
-    { name = "azure-keyvault-secrets", specifier = ">=4.9.0" },
     { name = "azure-monitor-opentelemetry-exporter", specifier = ">=1.0.0b33" },
-    { name = "azure-storage-blob", specifier = ">=12.24.0" },
     { name = "fastapi", specifier = ">=0.135.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "jinja2", specifier = ">=3.1.4" },

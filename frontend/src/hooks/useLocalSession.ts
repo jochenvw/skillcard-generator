@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import type { ClientSession, StateUpdate, ChatMessage } from '../types';
 
 const STORAGE_KEY = 'skillcard-session';
@@ -27,26 +27,22 @@ function persist(session: ClientSession) {
 }
 
 export function useLocalSession() {
-  const [session, setSession] = useState<ClientSession | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
+  const [session, setSession] = useState<ClientSession | null>(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       try {
-        setSession(JSON.parse(raw) as ClientSession);
+        return JSON.parse(raw) as ClientSession;
       } catch {
         const fresh = createFreshSession();
         persist(fresh);
-        setSession(fresh);
+        return fresh;
       }
-    } else {
-      const fresh = createFreshSession();
-      persist(fresh);
-      setSession(fresh);
     }
-    setLoading(false);
-  }, []);
+    const fresh = createFreshSession();
+    persist(fresh);
+    return fresh;
+  });
+  const loading = session === null;
 
   const updateSession = useCallback((updates: Partial<ClientSession>) => {
     setSession((prev) => {

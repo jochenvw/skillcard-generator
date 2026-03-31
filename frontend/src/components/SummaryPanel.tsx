@@ -1,6 +1,6 @@
 import type { PanelData } from "../types";
 
-export function SummaryPanel({ data }: { data: PanelData | null }) {
+export function SummaryPanel({ data, photoBase64 }: { data: PanelData | null; photoBase64?: string | null }) {
   if (!data) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
@@ -25,9 +25,9 @@ export function SummaryPanel({ data }: { data: PanelData | null }) {
       {/* Identity card */}
       <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 border border-zinc-700/50">
         <div className="flex items-center gap-3 mb-3">
-          {profile.photoUrl ? (
+          {photoBase64 ? (
             <img
-              src={profile.photoUrl}
+              src={photoBase64}
               alt={profile.name || "Profile"}
               className="w-10 h-10 rounded-full object-cover border border-violet-500/30"
             />

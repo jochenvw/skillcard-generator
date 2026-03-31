@@ -2,9 +2,10 @@ import type { CardData } from "../types";
 
 interface SkillCardProps {
   data: CardData;
+  photoBase64?: string | null;
 }
 
-export function SkillCard({ data }: SkillCardProps) {
+export function SkillCard({ data, photoBase64 }: SkillCardProps) {
   const level = data.level ?? 7;
   const xp = data.xp ?? 5120;
   const xpNext = data.xp_to_next_level ?? 2880;
@@ -42,9 +43,9 @@ export function SkillCard({ data }: SkillCardProps) {
           {/* Photo area */}
           <div className="relative h-44 bg-gradient-to-br from-indigo-900/80 via-slate-800 to-cyan-900/60 flex items-center justify-center overflow-hidden">
             <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_30%_40%,rgba(99,102,241,0.4),transparent_50%),radial-gradient(circle_at_70%_60%,rgba(6,182,212,0.3),transparent_50%)]" />
-            {data.photo_url ? (
+            {(photoBase64 || data.photo_url) ? (
               <img
-                src={data.photo_url}
+                src={photoBase64 || data.photo_url || undefined}
                 alt={data.display_name || "Profile"}
                 className="w-28 h-28 rounded-full object-cover border-2 border-cyan-500/30 shadow-lg shadow-cyan-500/20 relative z-10"
               />
