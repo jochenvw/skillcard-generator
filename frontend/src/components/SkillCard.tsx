@@ -15,7 +15,7 @@ export function SkillCard({ data, photoBase64 }: SkillCardProps) {
   return (
     <div className="w-[420px] mx-auto select-none">
       {/* Card outer frame */}
-      <div className="relative rounded-2xl border-2 border-cyan-500/60 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 p-1 shadow-[0_0_30px_rgba(6,182,212,0.15)]">
+      <div className="relative rounded-2xl border-2 border-cyan-500/60 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 p-1 shadow-[0_0_30px_rgba(6,182,212,0.15)] skillcard-frame crt-scanlines">
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/90 overflow-hidden">
 
           {/* Top bar: Level + Title + XP */}

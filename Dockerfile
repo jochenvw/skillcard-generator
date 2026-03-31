@@ -1,5 +1,9 @@
 # Stage 1: Build React frontend
 FROM node:22-slim AS frontend-build
+ARG GIT_SHA=dev
+ARG GIT_TAG=
+ENV GIT_SHA=$GIT_SHA
+ENV GIT_TAG=$GIT_TAG
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts

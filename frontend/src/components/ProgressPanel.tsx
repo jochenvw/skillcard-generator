@@ -1,6 +1,6 @@
-import type { PanelData } from "../types";
+import type { PanelData, StageInfo } from "../types";
 
-const STATUS_STYLES: Record<string, { dot: string; text: string }> = {
+const _UNUSED_STATUS_STYLES: Record<string, { dot: string; text: string }> = {
   completed: { dot: "bg-emerald-400", text: "text-emerald-400" },
   in_progress: { dot: "bg-violet-400 animate-pulse", text: "text-violet-300" },
   not_started: { dot: "bg-zinc-600", text: "text-zinc-500" },
@@ -25,8 +25,8 @@ export function ProgressPanel({ data }: { data: PanelData | null }) {
 
   return (
     <div className="flex flex-col h-full">
-      <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-4">
-        Progress
+      <h2 className="text-sm font-mono font-semibold text-zinc-300 uppercase tracking-wider mb-4">
+        <span className="text-cyan-500/60 mr-1">$</span>Progress
       </h2>
 
       {/* Progress bar */}
@@ -60,7 +60,7 @@ export function ProgressPanel({ data }: { data: PanelData | null }) {
             >
               <div className={`w-2 h-2 rounded-full shrink-0 ${style.dot}`} />
               <div className="min-w-0 flex-1">
-                <div className={`text-sm truncate ${isCurrent ? "text-violet-200 font-medium" : style.text}`}>
+                <div className={`text-sm font-mono truncate ${isCurrent ? "text-violet-200 font-medium" : style.text}`}>
                   {stage.title}
                 </div>
                 {stage.turns > 0 && (

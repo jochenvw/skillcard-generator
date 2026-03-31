@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, type FormEvent } from "react"
 import type { UIMessage } from "ai";
 import type { CardData } from "../types";
 import { SkillCard } from "./SkillCard";
+import { WelcomeBanner } from "./WelcomeBanner";
 
 interface ChatPanelProps {
   messages: UIMessage[];
@@ -102,11 +103,7 @@ export function ChatPanel({
     <div className="flex flex-col h-full">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.length === 0 && (
-          <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
-            Start a conversation to begin your interview.
-          </div>
-        )}
+        {messages.length === 0 && <WelcomeBanner />}
 
         {messages.map((message) => {
           const text = getMessageText(message);
@@ -121,7 +118,7 @@ export function ChatPanel({
                 className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                   message.role === "user"
                     ? "bg-violet-600 text-white rounded-br-md"
-                    : "bg-zinc-800 text-zinc-200 rounded-bl-md border border-zinc-700/50"
+                    : "bg-zinc-800/80 text-zinc-200 rounded-bl-md border border-zinc-700/50 border-l-2 border-l-cyan-500/40"
                 }`}
               >
                 <div className="whitespace-pre-wrap">{text}</div>
@@ -132,12 +129,8 @@ export function ChatPanel({
 
         {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
           <div className="flex justify-start">
-            <div className="bg-zinc-800 text-zinc-400 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm border border-zinc-700/50">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-              </div>
+            <div className="bg-zinc-800/80 text-cyan-400/70 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm font-mono border border-zinc-700/50 border-l-2 border-l-cyan-500/40">
+              <span className="terminal-cursor">▌</span>
             </div>
           </div>
         )}

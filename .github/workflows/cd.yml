@@ -52,10 +52,19 @@ jobs:
           echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER}" >> "$GITHUB_ENV"
           az acr login --name "${ACR_NAME}"
 
+      - name: Determine git info for frontend
+        id: gitinfo
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+
       - name: Build and push image
         run: |
           IMAGE="${{ env.ACR_LOGIN_SERVER }}/profile-agent:${{ steps.tag.outputs.value }}"
-          docker build -t "${IMAGE}" .
+          docker build \
+            --build-arg GIT_SHA=${{ steps.gitinfo.outputs.sha }} \
+            --build-arg GIT_TAG=${{ steps.gitinfo.outputs.tag }} \
+            -t "${IMAGE}" .
           docker push "${IMAGE}"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
@@ -74,8 +83,6 @@ jobs:
             entraTenantId=${{ secrets.ENTRA_TENANT_ID || '' }}
             entraClientId=${{ secrets.ENTRA_CLIENT_ID || '' }}
             entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET || '' }}
-            azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT || '' }}
-            azureOpenAiKey=${{ secrets.AZURE_OPENAI_KEY || '' }}
           failOnStdErr: false
 
       - name: Print app URL

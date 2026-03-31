@@ -273,10 +273,14 @@ export default function App() {
   // ── Loading state ───────────────────────────────────────────────────────
   if (loading || !session) {
     return (
-      <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-400">
+      <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-400 bg-grid-pattern">
         <div className="text-center space-y-3">
-          <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-sm">Initializing session…</p>
+          <p className="text-sm font-mono text-cyan-400/70">
+            <span className="text-zinc-500">[</span>
+            initializing
+            <span className="text-zinc-500">]</span>
+            <span className="terminal-cursor text-cyan-400 ml-0.5">▌</span>
+          </p>
         </div>
       </div>
     );
@@ -284,7 +288,7 @@ export default function App() {
 
   // ── Main layout ─────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-200">
+    <div className="flex h-screen bg-zinc-950 text-zinc-200 bg-grid-pattern">
       {/* Left panel — Progress */}
       <aside className="w-64 shrink-0 border-r border-zinc-800 p-4 overflow-hidden hidden lg:block">
         <ProgressPanel data={session.panelData} />
@@ -292,9 +296,14 @@ export default function App() {
 
       {/* Centre panel — Chat */}
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="border-b border-zinc-800 px-4 py-3 flex items-center justify-between shrink-0">
-          <h1 className="text-sm font-semibold text-zinc-300">
-            Skill Card Interview
+        <header className="border-b border-zinc-800 px-4 py-3 flex items-center justify-between shrink-0 header-scanline">
+          <h1 className="text-sm font-mono text-cyan-400/80 tracking-tight">
+            <span className="text-zinc-500">skill-deck</span>
+            <span className="text-zinc-600">@</span>
+            <span className="text-zinc-500">v0.1</span>
+            <span className="text-zinc-600 mx-1">~/</span>
+            <span className="text-cyan-400/90">interview</span>
+            <span className="terminal-cursor text-cyan-400 ml-0.5">▌</span>
           </h1>
           <div className="flex items-center gap-1.5">
             {/* Export */}
@@ -362,6 +371,10 @@ export default function App() {
           photoBase64={session.photoBase64}
         />
       </aside>
+      {/* Version badge */}
+      <div className="fixed bottom-2 right-2 font-mono text-[10px] text-zinc-600 opacity-50 hover:opacity-100 transition-opacity select-none pointer-events-auto z-50">
+        {__GIT_TAG__ ? `${__GIT_TAG__} · ${__GIT_SHA__}` : __GIT_SHA__}
+      </div>
     </div>
   );
 }
