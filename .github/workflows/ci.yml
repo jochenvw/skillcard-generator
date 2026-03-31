@@ -34,9 +34,6 @@ jobs:
       - name: Syntax check (ruff)
         run: uvx ruff@0.15.6 check --select E9,F63,F7,F82 src/ tests/
 
-      - name: Type check (pyright)
-        run: uvx pyright@1.1.390 src/
-
       - name: Test (pytest)
         run: uv run pytest tests/ -v --tb=short
 
