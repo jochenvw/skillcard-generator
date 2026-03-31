@@ -163,6 +163,11 @@ def build_panel_data(engine: TransitionEngine, stage_state: StageState,
             "status": progress.status.value,
         })
 
+    # Build photo URL when a picture has been uploaded
+    photo_url = None
+    if photo_status == "uploaded":
+        photo_url = f"/api/sessions/{stage_state.session_id}/profile-picture"
+
     return PanelData(
         stages=stages,
         current_stage_id=stage_state.current_stage_id,
@@ -171,6 +176,7 @@ def build_panel_data(engine: TransitionEngine, stage_state: StageState,
             "name": identity_name or None,
             "role": role_description or None,
             "photo": photo_status if photo_status != "unknown" else None,
+            "photoUrl": photo_url,
         },
     )
 
@@ -486,9 +492,16 @@ class InterviewService:
                 "xp_to_next_level": 2000,
                 "flavor_text": "",
             }
-        
+
         # Ensure display_name is set
         card_data["display_name"] = display_name
+
+        # Include profile picture URL so the SkillCard can display it
+        if session.photo_status == "uploaded":
+            card_data["photo_url"] = f"/api/sessions/{session.session_id}/profile-picture"
+        else:
+            card_data["photo_url"] = None
+
         return card_data
 
     def _format_synthesis_for_display(self, synthesis_raw: str) -> str:

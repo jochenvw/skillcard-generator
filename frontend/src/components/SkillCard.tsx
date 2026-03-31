@@ -39,12 +39,20 @@ export function SkillCard({ data }: SkillCardProps) {
             </span>
           </div>
 
-          {/* Photo area — placeholder with gradient */}
+          {/* Photo area */}
           <div className="relative h-44 bg-gradient-to-br from-indigo-900/80 via-slate-800 to-cyan-900/60 flex items-center justify-center overflow-hidden">
             <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_30%_40%,rgba(99,102,241,0.4),transparent_50%),radial-gradient(circle_at_70%_60%,rgba(6,182,212,0.3),transparent_50%)]" />
-            <div className="w-28 h-28 rounded-full bg-slate-700/60 border-2 border-cyan-500/30 flex items-center justify-center text-4xl">
-              {data.display_name?.charAt(0) || "?"}
-            </div>
+            {data.photo_url ? (
+              <img
+                src={data.photo_url}
+                alt={data.display_name || "Profile"}
+                className="w-28 h-28 rounded-full object-cover border-2 border-cyan-500/30 shadow-lg shadow-cyan-500/20 relative z-10"
+              />
+            ) : (
+              <div className="w-28 h-28 rounded-full bg-slate-700/60 border-2 border-cyan-500/30 flex items-center justify-center text-4xl">
+                {data.display_name?.charAt(0) || "?"}
+              </div>
+            )}
           </div>
 
           {/* Top Expertise */}

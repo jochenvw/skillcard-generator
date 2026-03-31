@@ -9,6 +9,7 @@ export interface ProfileInfo {
   name: string | null;
   role: string | null;
   photo: string | null;
+  photoUrl: string | null;
 }
 
 export interface PanelData {
@@ -43,4 +44,5 @@ export interface CardData {
   grow_into: string;
   xp_to_next_level: number;
   flavor_text: string;
+  photo_url: string | null;
 }

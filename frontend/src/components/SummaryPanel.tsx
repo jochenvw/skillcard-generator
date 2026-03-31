@@ -25,16 +25,24 @@ export function SummaryPanel({ data }: { data: PanelData | null }) {
       {/* Identity card */}
       <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 border border-zinc-700/50">
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-300 text-lg font-semibold">
-            {profile.name ? profile.name[0].toUpperCase() : "?"}
-          </div>
+          {profile.photoUrl ? (
+            <img
+              src={profile.photoUrl}
+              alt={profile.name || "Profile"}
+              className="w-10 h-10 rounded-full object-cover border border-violet-500/30"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-300 text-lg font-semibold">
+              {profile.name ? profile.name[0].toUpperCase() : "?"}
+            </div>
+          )}
           <div>
             <div className="text-sm font-medium text-zinc-200">
               {profile.name || "Name pending..."}
             </div>
             <div className="text-xs text-zinc-500">
               {profile.photo === "uploaded"
-                ? "Photo uploaded"
+                ? "📷 Photo uploaded"
                 : profile.photo === "skipped"
                   ? "Photo skipped"
                   : "Photo pending"}
