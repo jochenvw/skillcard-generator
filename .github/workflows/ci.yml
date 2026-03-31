@@ -32,10 +32,10 @@ jobs:
         run: uv sync --dev
 
       - name: Lint (ruff)
-        run: uv run ruff check src/ tests/
+        run: uv run --with ruff ruff check src/ tests/
 
       - name: Type check (pyright)
-        run: uv run pyright src/
+        run: uv run --with pyright pyright src/
 
       - name: Test (pytest)
         run: uv run pytest tests/ -v --tb=short
