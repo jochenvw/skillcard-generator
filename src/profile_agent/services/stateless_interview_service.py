@@ -434,6 +434,93 @@ async def _run_card_generation(
     return card_data
 
 
+_image_client: AsyncAzureOpenAI | None = None
+
+
+async def _get_image_client(settings: Settings) -> AsyncAzureOpenAI:
+    """Separate client for image generation — AIProjectClient doesn't support images.generate()."""
+    global _image_client
+    if _image_client is not None:
+        return _image_client
+
+    from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+
+    # Derive the services.ai endpoint from the Foundry project endpoint
+    from urllib.parse import urlparse
+    host = urlparse(settings.foundry_project_endpoint).hostname or ""
+    resource_name = host.split(".")[0] if host else ""
+    endpoint = f"https://{resource_name}.services.ai.azure.com" if resource_name else ""
+
+    if not endpoint:
+        raise RuntimeError("Cannot derive image endpoint from Foundry project endpoint")
+
+    cred = DefaultAzureCredential()
+    token_provider = get_bearer_token_provider(cred, "https://cognitiveservices.azure.com/.default")
+    _image_client = AsyncAzureOpenAI(
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+        api_version=settings.azure_openai_api_version,
+    )
+    logger.info("Image client initialized → %s (deployment=%s)", endpoint, settings.foundry_image_deployment_name)
+    return _image_client
+
+
+async def _generate_card_image(client, settings: Settings, card_data: dict) -> dict | None:
+    """Generate a trading card image using the image model. Returns {base64: ...} or None."""
+    from profile_agent.services.image_service import ImageService
+    from profile_agent.models.llm_contracts import ImageGenerationRequest
+
+    archetype = card_data.get("archetype", "Technologist")
+    display_name = card_data.get("display_name", "Unknown")
+    rarity = card_data.get("rarity", "rare")
+    signature = card_data.get("signature_ability", {})
+    ability_name = signature.get("name", "") if signature else ""
+    stats = card_data.get("top_stats", [])
+    top_skill = stats[0]["label"] if stats else "Technology"
+
+    rarity_style = {
+        "common": "muted steel tones, understated lighting",
+        "rare": "cool blue ambient glow, crisp lighting",
+        "epic": "dramatic purple energy aura, volumetric lighting",
+        "legendary": "radiant golden aura, god-rays, cinematic epic lighting",
+    }.get(rarity, "blue ambient glow")
+
+    prompt = (
+        f"A premium collectible trading card illustration for '{display_name}', "
+        f"a {archetype} archetype. "
+        f"Centered head-and-shoulders portrait in AAA game character art style. "
+        f"The character embodies {top_skill} mastery"
+        f"{f' with the ability: {ability_name}' if ability_name else ''}. "
+        f"Visual mood: {rarity_style}. "
+        f"Dark gradient background, cinematic composition, sharp high contrast, "
+        f"digital painting style, no text, no UI elements, no borders, no card frame. "
+        f"Clean background suitable for compositing onto a card template. "
+        f"Professional, polished, game-quality character portrait."
+    )
+
+    try:
+        image_client = await _get_image_client(settings)
+        image_svc = ImageService(image_client, default_deployment=settings.foundry_image_deployment_name)
+        request = ImageGenerationRequest(
+            prompt=prompt,
+            model_deployment=settings.foundry_image_deployment_name,
+            size="1024x1024",
+        )
+
+        result = await image_svc.generate_card_image(request)
+        if result.success:
+            if result.raw_bytes:
+                import base64
+                return {"base64": base64.b64encode(result.raw_bytes).decode()}
+            elif result.image_url:
+                return {"url": result.image_url}
+        else:
+            logger.warning("Card image generation failed: %s", result.error)
+    except Exception as e:
+        logger.error("Card image generation error: %s", e, exc_info=True)
+    return None
+
+
 def _format_synthesis_for_display(synthesis_raw: str) -> str:
     syn = _extract_json(synthesis_raw)
     if not syn:
@@ -751,6 +838,21 @@ async def process_stateless_turn(
             yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
 
             yield f'data: {json.dumps({"type": "data-cardData", "data": card_data_result})}\n\n'
+
+            # Generate card image in parallel (non-blocking — card data already sent)
+            yield f'data: {json.dumps({"type": "text-start", "id": text_id + "-img"})}\n\n'
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": "\\n\\n✨ Generating your AI card portrait..."})}\n\n'
+            try:
+                image_result = await _generate_card_image(client, settings, card_data_result)
+                if image_result:
+                    yield f'data: {json.dumps({"type": "data-cardImage", "data": image_result})}\n\n'
+                    yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": " Done!"})}\n\n'
+                else:
+                    yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": " (image generation unavailable)"})}\n\n'
+            except Exception as img_err:
+                logger.warning("Card image generation skipped: %s", img_err)
+                yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": " (image generation skipped)"})}\n\n'
+            yield f'data: {json.dumps({"type": "text-end", "id": text_id + "-img"})}\n\n'
         except Exception as e:
             logger.error("Card generation failed: %s", e, exc_info=True)
             error_msg = f"I couldn't generate your card right now. ({type(e).__name__}: {e})"

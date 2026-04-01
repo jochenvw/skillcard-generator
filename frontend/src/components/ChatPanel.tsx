@@ -218,17 +218,19 @@ export function ChatPanel({
           </div>
         )}
 
-        {cardImageSrc && !cardData && (
-          <div className="flex justify-start">
-            <div className="max-w-[90%] rounded-2xl rounded-bl-md overflow-hidden border border-violet-500/30 shadow-lg shadow-violet-500/10">
-              <img
-                src={cardImageSrc}
-                alt="Your generated skill card"
-                className="w-full max-w-md rounded-t-2xl"
-              />
-              <div className="bg-zinc-800 px-4 py-2 text-xs text-zinc-400 text-center">
-                Your Skill Card
+        {cardImageSrc && (
+          <div className="flex justify-center py-4">
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-[420px] rounded-2xl overflow-hidden border-2 border-violet-500/30 shadow-lg shadow-violet-500/10 skillcard-frame rarity-epic">
+                <img
+                  src={cardImageSrc}
+                  alt="AI-generated card portrait"
+                  className="w-full"
+                />
               </div>
+              <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">
+                ✨ AI-Generated Portrait
+              </span>
             </div>
           </div>
         )}
