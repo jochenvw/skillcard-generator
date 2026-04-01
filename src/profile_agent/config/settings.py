@@ -42,14 +42,14 @@ class Settings(BaseSettings):
 
     # Azure AI Foundry
     foundry_project_endpoint: str = ""
-    foundry_model_deployment_name: str = "gpt-4o"
-    foundry_image_deployment_name: str = "dall-e-3"
+    foundry_model_deployment_name: str = "gpt-5.4"
+    foundry_image_deployment_name: str = "gpt-image-1.5"
 
     # Azure OpenAI direct/model endpoint settings
     azure_openai_endpoint: str = ""
     azure_openai_key: str = ""
     azure_openai_deployment: str = ""
-    azure_openai_api_version: str = "2025-01-01-preview"
+    azure_openai_api_version: str = "2025-04-01-preview"
 
     # Azure Storage
     azure_storage_account_url: str = ""

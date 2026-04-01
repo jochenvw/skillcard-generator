@@ -29,6 +29,7 @@ NEXT_STAGE_COMMANDS = ("next stage", "skip stage", "move on", "fasttrack", "fast
 PROGRESS_COMMANDS = ("progress", "what stage", "where are we", "stage are we", "how far")
 FINALIZE_COMMANDS = ("done", "finish", "generate card", "finalize", "complete")
 START_OVER_COMMANDS = ("start over", "restart", "reset", "begin again", "start from scratch")
+JUMP_TO_CARD_COMMANDS = ("/card", "/generate")
 
 
 @lru_cache(maxsize=1)
@@ -580,23 +581,27 @@ async def process_stateless_turn(
         yield "data: [DONE]\n\n"
         return
 
-    # Finalize (final stage only)
+    # Finalize (final stage only) — at card_generation, actually generate the card
     if stage.next_stage is None and any(cmd in lowered for cmd in FINALIZE_COMMANDS):
-        text_id = str(uuid.uuid4())
-        msg = "Interview complete. Generating your final strengths card output next."
-        yield f'data: {json.dumps({"type": "text-start", "id": text_id})}\n\n'
-        yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": msg})}\n\n'
-        yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
+        if stage.id == "card_generation":
+            # Fall through to the card generation handler below by treating this as turn 0
+            turn_count = 0
+        else:
+            text_id = str(uuid.uuid4())
+            msg = "Interview complete. Generating your final strengths card output next."
+            yield f'data: {json.dumps({"type": "text-start", "id": text_id})}\n\n'
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": msg})}\n\n'
+            yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
 
-        panel = _build_panel_data(current_stage_id, completed_ids, identity)
-        state_update = StateUpdate(
-            current_stage_id=current_stage_id,
-            identity=_identity_dict(identity),
-            panel_data=panel,
-        )
-        yield f'data: {json.dumps({"type": "data-stateUpdate", "data": state_update.to_dict()})}\n\n'
-        yield "data: [DONE]\n\n"
-        return
+            panel = _build_panel_data(current_stage_id, completed_ids, identity)
+            state_update = StateUpdate(
+                current_stage_id=current_stage_id,
+                identity=_identity_dict(identity),
+                panel_data=panel,
+            )
+            yield f'data: {json.dumps({"type": "data-stateUpdate", "data": state_update.to_dict()})}\n\n'
+            yield "data: [DONE]\n\n"
+            return
 
     # Start over
     if any(cmd in lowered for cmd in START_OVER_COMMANDS):
@@ -622,6 +627,32 @@ async def process_stateless_turn(
         yield f'data: {json.dumps({"type": "data-stateUpdate", "data": state_update.to_dict()})}\n\n'
         yield "data: [DONE]\n\n"
         return
+
+    # Jump to card generation (/card shortcut)
+    if any(lowered.strip() == cmd for cmd in JUMP_TO_CARD_COMMANDS):
+        # Summarize current stage before jumping
+        if current_stage_id != "card_generation":
+            stage_summary = await _generate_stage_summary(
+                stage.title, stage.purpose, current_stage_messages, client, settings,
+            )
+            completed_summaries = completed_summaries + [CompletedStageSummary(id=current_stage_id, summary=stage_summary)]
+            # Also mark any skipped stages between current and card_generation
+            all_stages = get_all_stages()
+            completed_set = {s.id for s in completed_summaries}
+            for s in all_stages:
+                if s.id == "card_generation":
+                    break
+                if s.id not in completed_set:
+                    completed_summaries = completed_summaries + [CompletedStageSummary(id=s.id, summary=f"Skipped stage: {s.title}")]
+            completed_ids = [s.id for s in completed_summaries]
+
+        card_stage = get_stage("card_generation")
+        if card_stage:
+            current_stage_id = card_stage.id
+            stage = card_stage
+            stage_advanced = True
+            # Force turn_count=0 so card generation handler fires
+            turn_count = 0
 
     # Progress query
     if any(tok in lowered for tok in PROGRESS_COMMANDS):

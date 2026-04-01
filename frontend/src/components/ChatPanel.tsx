@@ -4,6 +4,7 @@ import type { CardData } from "../types";
 import { SkillCard } from "./SkillCard";
 import { WelcomeBanner } from "./WelcomeBanner";
 import { CompactionIndicator } from "./CompactionIndicator";
+import { CardGeneratingIndicator } from "./CardGeneratingIndicator";
 
 interface SlashCommand {
   command: string;
@@ -15,6 +16,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { command: "/next",     label: "Next stage",   description: "Move on to the next interview stage" },
   { command: "/skip",     label: "Skip stage",   description: "Skip the current stage" },
   { command: "/progress", label: "Progress",     description: "See where you are in the interview" },
+  { command: "/card",     label: "Generate card", description: "Skip ahead and generate your skill card now" },
   { command: "/done",     label: "Done",         description: "Finalize and generate your skill card" },
   { command: "/restart",  label: "Start over",   description: "Reset and start from the beginning" },
 ];
@@ -166,7 +168,7 @@ export function ChatPanel({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && <WelcomeBanner />}
@@ -200,6 +202,15 @@ export function ChatPanel({
             </div>
           </div>
         )}
+
+        <CardGeneratingIndicator
+          active={isLoading && !cardData && (() => {
+            const lastMsg = messages[messages.length - 1];
+            if (!lastMsg || lastMsg.role !== "assistant") return false;
+            const text = getMessageText(lastMsg).toLowerCase();
+            return text.includes("synthesizing") || text.includes("generating your skill deck") || text.includes("card forge");
+          })()}
+        />
 
         {cardData && (
           <div className="flex justify-center py-4">

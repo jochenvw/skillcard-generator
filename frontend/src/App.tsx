@@ -293,7 +293,7 @@ export default function App() {
   // ── Loading state ───────────────────────────────────────────────────────
   if (loading || !session) {
     return (
-      <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-400 bg-grid-pattern">
+      <div className="flex items-center justify-center h-full bg-zinc-950 text-zinc-400 bg-grid-pattern">
         <div className="text-center space-y-3">
           <p className="text-sm font-mono text-cyan-400/70">
             <span className="text-zinc-500">[</span>
@@ -308,7 +308,7 @@ export default function App() {
 
   // ── Main layout ─────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-200 bg-grid-pattern">
+    <div className="flex h-full bg-zinc-950 text-zinc-200 bg-grid-pattern">
       {/* Left panel — Progress */}
       <aside className="w-64 shrink-0 border-r border-zinc-800 p-4 overflow-hidden hidden lg:block">
         <ProgressPanel data={session.panelData} />
