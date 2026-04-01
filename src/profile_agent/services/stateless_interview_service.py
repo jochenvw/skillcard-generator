@@ -258,6 +258,7 @@ async def _get_openai_client(settings: Settings | None = None) -> AsyncAzureOpen
     endpoint = settings.effective_azure_openai_endpoint
 
     if endpoint and settings.azure_openai_key:
+        logger.info("OpenAI client: using API key auth → %s", endpoint)
         _openai_client = AsyncAzureOpenAI(
             azure_endpoint=endpoint,
             api_key=settings.azure_openai_key,
@@ -266,6 +267,7 @@ async def _get_openai_client(settings: Settings | None = None) -> AsyncAzureOpen
     elif endpoint and settings.entra_tenant_id and settings.entra_client_id and settings.entra_client_secret:
         from azure.identity.aio import ClientSecretCredential, get_bearer_token_provider
 
+        logger.info("OpenAI client: using Entra client-secret auth → %s", endpoint)
         _openai_credential = ClientSecretCredential(
             tenant_id=settings.entra_tenant_id,
             client_id=settings.entra_client_id,
@@ -283,6 +285,8 @@ async def _get_openai_client(settings: Settings | None = None) -> AsyncAzureOpen
         from azure.ai.projects.aio import AIProjectClient
         from azure.identity.aio import DefaultAzureCredential
 
+        logger.info("OpenAI client: using DefaultAzureCredential via Foundry project → %s",
+                     settings.foundry_project_endpoint)
         _openai_credential = DefaultAzureCredential()
         project_client = AIProjectClient(
             endpoint=settings.foundry_project_endpoint,
@@ -290,6 +294,7 @@ async def _get_openai_client(settings: Settings | None = None) -> AsyncAzureOpen
         )
         _openai_client = project_client.get_openai_client()
 
+    logger.info("OpenAI client initialized (deployment=%s)", settings.effective_azure_openai_deployment)
     return _openai_client
 
 
@@ -660,12 +665,18 @@ async def process_stateless_turn(
         preamble = stage.opening_prompt + "\n\nLet me synthesize your profile...\n\n"
         yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": preamble})}\n\n'
 
-        synthesis_raw = await _run_synthesis(client, settings, completed_summaries, current_stage_messages)
-        display_text = _format_synthesis_for_display(synthesis_raw)
-        yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": display_text})}\n\n'
+        try:
+            synthesis_raw = await _run_synthesis(client, settings, completed_summaries, current_stage_messages)
+            display_text = _format_synthesis_for_display(synthesis_raw)
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": display_text})}\n\n'
 
-        closing = "\n\n**What did I get right? What did I miss or get wrong? Anything you want to add or emphasize?**"
-        yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": closing})}\n\n'
+            closing = "\n\n**What did I get right? What did I miss or get wrong? Anything you want to add or emphasize?**"
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": closing})}\n\n'
+        except Exception as e:
+            logger.error("Synthesis failed: %s", e, exc_info=True)
+            error_msg = f"I couldn't synthesize your profile right now. ({type(e).__name__}: {e})"
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": error_msg})}\n\n'
+
         yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
 
         panel = _build_panel_data(current_stage_id, completed_ids, identity)
@@ -686,18 +697,25 @@ async def process_stateless_turn(
         preamble = stage.opening_prompt + "\n\n"
         yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": preamble})}\n\n'
 
-        yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": "Synthesizing your profile first...\\n\\n"})}\n\n'
-        synthesis_json = await _run_synthesis(client, settings, completed_summaries, current_stage_messages)
+        try:
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": "Synthesizing your profile first...\\n\\n"})}\n\n'
+            synthesis_json = await _run_synthesis(client, settings, completed_summaries, current_stage_messages)
 
-        yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": "Generating your Skill Deck card...\\n\\n"})}\n\n'
-        display_name = identity.name or "Anonymous"
-        card_data_result = await _run_card_generation(client, settings, synthesis_json, display_name, identity.photo_status)
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": "Generating your Skill Deck card...\\n\\n"})}\n\n'
+            display_name = identity.name or "Anonymous"
+            card_data_result = await _run_card_generation(client, settings, synthesis_json, display_name, identity.photo_status)
 
-        status_msg = f"Your **{card_data_result.get('display_name', 'Skill')} Deck** card is ready! Check it out below."
-        yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": status_msg})}\n\n'
-        yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
+            status_msg = f"Your **{card_data_result.get('display_name', 'Skill')} Deck** card is ready! Check it out below."
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": status_msg})}\n\n'
+            yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
 
-        yield f'data: {json.dumps({"type": "data-cardData", "data": card_data_result})}\n\n'
+            yield f'data: {json.dumps({"type": "data-cardData", "data": card_data_result})}\n\n'
+        except Exception as e:
+            logger.error("Card generation failed: %s", e, exc_info=True)
+            error_msg = f"I couldn't generate your card right now. ({type(e).__name__}: {e})"
+            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": error_msg})}\n\n'
+            yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
+            card_data_result = None
 
         panel = _build_panel_data(current_stage_id, completed_ids, identity)
         state_update = StateUpdate(
@@ -753,19 +771,25 @@ async def process_stateless_turn(
 
     yield f'data: {json.dumps({"type": "text-start", "id": text_id})}\n\n'
 
-    stream = await client.chat.completions.create(
-        model=settings.effective_azure_openai_deployment,
-        messages=history,
-        temperature=0.7,
-        max_completion_tokens=280,
-        stream=True,
-    )
+    try:
+        stream = await client.chat.completions.create(
+            model=settings.effective_azure_openai_deployment,
+            messages=history,
+            temperature=0.7,
+            max_completion_tokens=280,
+            stream=True,
+        )
 
-    async for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            token = chunk.choices[0].delta.content
-            full_response += token
-            yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": token})}\n\n'
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                token = chunk.choices[0].delta.content
+                full_response += token
+                yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": token})}\n\n'
+    except Exception as e:
+        logger.error("LLM streaming call failed: %s", e, exc_info=True)
+        error_msg = f"I couldn't reach the AI model. Please check your Azure credentials and try again. ({type(e).__name__})"
+        yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": error_msg})}\n\n'
+        full_response = error_msg
 
     yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
 

@@ -210,6 +210,16 @@ export default function App() {
             setCardData(embedded);
             updateSession({ cardData: embedded });
           }
+        } else if (!assistantText) {
+          // Stream ended without content or state update — surface the error
+          const errText = "Something went wrong — no response received. Please try again.";
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId
+                ? { ...m, parts: [{ type: "text" as const, text: errText }] }
+                : m,
+            ),
+          );
         }
       } catch (err) {
         console.error("Chat stream error:", err);
