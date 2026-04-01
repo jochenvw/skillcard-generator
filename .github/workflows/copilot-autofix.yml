@@ -1,0 +1,82 @@
+name: Copilot Autofix
+
+on:
+  check_suite:
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  checks: read
+
+jobs:
+  autofix:
+    # Only run when CI fails on a Copilot-authored PR branch
+    if: >-
+      github.event.check_suite.conclusion == 'failure' &&
+      github.event.check_suite.app.slug == 'github-actions' &&
+      startsWith(github.event.check_suite.head_branch, 'copilot/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find PR for this branch
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.check_suite.head_branch;
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branch}`,
+              state: 'open',
+            });
+            if (prs.length === 0) {
+              core.setOutput('found', 'false');
+              return;
+            }
+            core.setOutput('found', 'true');
+            core.setOutput('number', prs[0].number);
+            core.setOutput('branch', branch);
+
+      - name: Request Copilot fix
+        if: steps.pr.outputs.found == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ steps.pr.outputs.number }};
+            const branch = '${{ steps.pr.outputs.branch }}';
+
+            // Get failed job logs for context
+            const runId = context.payload.check_suite.check_runs_url
+              ? null : null;
+            const { data: checkRuns } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.payload.check_suite.head_sha,
+              status: 'completed',
+              filter: 'latest',
+            });
+
+            const failures = checkRuns.check_runs
+              .filter(cr => cr.conclusion === 'failure')
+              .map(cr => `- **${cr.name}**: ${cr.output?.summary || 'failed'}`)
+              .join('\n');
+
+            const body = [
+              `@copilot The CI checks failed on this PR. Please fix the issues and push a new commit.`,
+              ``,
+              `## Failed checks`,
+              failures || '- (see workflow run for details)',
+              ``,
+              `Please review the failing CI logs, fix the code, and commit the changes to this branch.`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: body,
+            });
+
+            console.log(`Posted fix request on PR #${prNumber}`);
