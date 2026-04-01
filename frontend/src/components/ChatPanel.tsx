@@ -5,6 +5,20 @@ import { SkillCard } from "./SkillCard";
 import { WelcomeBanner } from "./WelcomeBanner";
 import { CompactionIndicator } from "./CompactionIndicator";
 
+interface SlashCommand {
+  command: string;
+  label: string;
+  description: string;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { command: "/next",     label: "Next stage",   description: "Move on to the next interview stage" },
+  { command: "/skip",     label: "Skip stage",   description: "Skip the current stage" },
+  { command: "/progress", label: "Progress",     description: "See where you are in the interview" },
+  { command: "/done",     label: "Done",         description: "Finalize and generate your skill card" },
+  { command: "/restart",  label: "Start over",   description: "Reset and start from the beginning" },
+];
+
 interface ChatPanelProps {
   messages: UIMessage[];
   isLoading: boolean;
@@ -37,6 +51,8 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [pendingImage, setPendingImage] = useState<File | null>(null);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,6 +70,28 @@ export function ChatPanel({
     }
   }, [input]);
 
+  // Derive filtered slash commands from current input
+  const slashFilter = input.startsWith("/") ? input.toLowerCase() : "";
+  const filteredCommands = slashFilter
+    ? SLASH_COMMANDS.filter((c) => c.command.startsWith(slashFilter))
+    : [];
+
+  // Open/close slash menu based on filtered results
+  useEffect(() => {
+    if (filteredCommands.length > 0) {
+      setSlashMenuOpen(true);
+      setSlashMenuIndex(0);
+    } else {
+      setSlashMenuOpen(false);
+    }
+  }, [filteredCommands.length]);
+
+  const acceptSlashCommand = useCallback((cmd: SlashCommand) => {
+    setInput(cmd.command + " ");
+    setSlashMenuOpen(false);
+    textareaRef.current?.focus();
+  }, []);
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = input.trim();
@@ -67,6 +105,9 @@ export function ChatPanel({
       onSendMessage(text);
     }
     setInput("");
+    setSlashMenuOpen(false);
+    // Keep focus in the textarea after sending
+    textareaRef.current?.focus();
   };
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -95,6 +136,30 @@ export function ChatPanel({
   }, [onPhotoSelected]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Navigate slash command menu
+    if (slashMenuOpen && filteredCommands.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashMenuIndex((i) => (i - 1 + filteredCommands.length) % filteredCommands.length);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashMenuIndex((i) => (i + 1) % filteredCommands.length);
+        return;
+      }
+      if (e.key === "Tab" || e.key === "Enter") {
+        e.preventDefault();
+        acceptSlashCommand(filteredCommands[slashMenuIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashMenuOpen(false);
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       const form = e.currentTarget.closest("form");
@@ -183,6 +248,41 @@ export function ChatPanel({
             </button>
           </div>
         )}
+
+        {/* Slash command menu */}
+        {slashMenuOpen && filteredCommands.length > 0 && (
+          <div className="mb-2 rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl overflow-hidden">
+            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-500 border-b border-zinc-800">
+              Commands
+            </div>
+            {filteredCommands.map((cmd, idx) => (
+              <button
+                key={cmd.command}
+                type="button"
+                onMouseDown={(e) => {
+                  // Use onMouseDown + preventDefault to avoid blur on textarea
+                  e.preventDefault();
+                  acceptSlashCommand(cmd);
+                }}
+                className={`w-full text-left px-3 py-2 flex items-center gap-3 text-sm transition-colors ${
+                  idx === slashMenuIndex
+                    ? "bg-violet-600/30 text-zinc-100"
+                    : "text-zinc-300 hover:bg-zinc-800"
+                }`}
+              >
+                <span className="font-mono text-violet-400 text-xs w-20 shrink-0">{cmd.command}</span>
+                <span className="font-medium text-xs">{cmd.label}</span>
+                <span className="text-zinc-500 text-xs ml-auto">{cmd.description}</span>
+              </button>
+            ))}
+            <div className="px-3 py-1 text-[10px] text-zinc-600 border-t border-zinc-800 flex gap-3">
+              <span>↑↓ navigate</span>
+              <span>↵ / Tab select</span>
+              <span>Esc dismiss</span>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="flex gap-2 items-end">
           <input
             ref={fileInputRef}
@@ -207,7 +307,7 @@ export function ChatPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type your message..."
+            placeholder="Type a message or / for commands…"
             rows={1}
             disabled={isLoading}
             className="flex-1 resize-none overflow-hidden rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500 disabled:opacity-50"
