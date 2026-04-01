@@ -40,6 +40,7 @@ class StatelessChatRequest(BaseModel):
     currentStageMessages: list[dict] = Field(default_factory=list)
     identity: IdentityContext = Field(default_factory=IdentityContext)
     hasImage: bool = False
+    photoBase64: str | None = None
 
 
 # ── Endpoint ──
@@ -66,6 +67,14 @@ async def chat(
     if not user_text:
         raise HTTPException(status_code=400, detail="Message must not be empty")
 
+    logger.info(
+        "POST /api/chat | stage=%s user=%s msg=%s has_photo=%s",
+        body.currentStageId,
+        body.identity.name or user.get("name", "anon"),
+        user_text[:60],
+        bool(body.photoBase64),
+    )
+
     # Map request models to service dataclasses
     identity = SvcIdentity(
         name=body.identity.name,
@@ -85,6 +94,7 @@ async def chat(
             current_stage_messages=body.currentStageMessages,
             identity=identity,
             has_image=body.hasImage,
+            photo_base64=body.photoBase64,
         ):
             yield chunk
 

@@ -92,6 +92,7 @@ export default function App() {
           photoStatus: session.identity.photoStatus,
         },
         hasImage,
+        photoBase64: session.photoBase64 || undefined,
       };
 
       const assistantMsgId = `a-${Date.now()}`;

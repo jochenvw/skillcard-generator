@@ -465,57 +465,120 @@ async def _get_image_client(settings: Settings) -> AsyncAzureOpenAI:
     return _image_client
 
 
-async def _generate_card_image(client, settings: Settings, card_data: dict) -> dict | None:
-    """Generate a trading card image using the image model. Returns {base64: ...} or None."""
-    from profile_agent.services.image_service import ImageService
-    from profile_agent.models.llm_contracts import ImageGenerationRequest
+async def _generate_card_image(client, settings: Settings, card_data: dict, photo_base64: str | None = None) -> dict | None:
+    """Generate a full trading card image using gpt-image-1.5. Uses images.edit if photo provided."""
+    import base64 as b64mod
+    import io
 
-    archetype = card_data.get("archetype", "Technologist")
     display_name = card_data.get("display_name", "Unknown")
+    archetype = card_data.get("archetype", "Technologist")
     rarity = card_data.get("rarity", "rare")
+    level = card_data.get("level", 7)
+    xp = card_data.get("xp", 5000)
     signature = card_data.get("signature_ability", {})
-    ability_name = signature.get("name", "") if signature else ""
+    ability_name = signature.get("name", "Core Skill") if signature else "Core Skill"
+    ability_desc = signature.get("description", "") if signature else ""
     stats = card_data.get("top_stats", [])
-    top_skill = stats[0]["label"] if stats else "Technology"
+    strengths = card_data.get("strengths", [])
+    weaknesses = card_data.get("weaknesses", [])
+    growth = card_data.get("growth_focus", "")
+    flavor = card_data.get("flavor_text", "")
+
+    stats_text = "\n".join(f"- {s.get('label','?')}: {s.get('value',5)}/10" for s in stats[:4])
+    strengths_text = ", ".join(strengths[:3]) if strengths else "Technical excellence"
+    weaknesses_text = ", ".join(weaknesses[:2]) if weaknesses else "Growth areas"
 
     rarity_style = {
-        "common": "muted steel tones, understated lighting",
-        "rare": "cool blue ambient glow, crisp lighting",
-        "epic": "dramatic purple energy aura, volumetric lighting",
-        "legendary": "radiant golden aura, god-rays, cinematic epic lighting",
-    }.get(rarity, "blue ambient glow")
+        "common": "neutral steel tones, muted lighting, simple metallic frame",
+        "rare": "blue glowing accents, cool blue light strips, blue metallic frame",
+        "epic": "purple glowing accents, purple energy effects, purple/violet metallic frame",
+        "legendary": "golden glowing accents, god-ray lighting, ornate gold metallic frame with gems",
+    }.get(rarity, "blue glowing accents")
 
-    prompt = (
-        f"A premium collectible trading card illustration for '{display_name}', "
-        f"a {archetype} archetype. "
-        f"Centered head-and-shoulders portrait in AAA game character art style. "
-        f"The character embodies {top_skill} mastery"
-        f"{f' with the ability: {ability_name}' if ability_name else ''}. "
-        f"Visual mood: {rarity_style}. "
-        f"Dark gradient background, cinematic composition, sharp high contrast, "
-        f"digital painting style, no text, no UI elements, no borders, no card frame. "
-        f"Clean background suitable for compositing onto a card template. "
-        f"Professional, polished, game-quality character portrait."
-    )
+    prompt = f"""A premium, high-end digital trading card for a futuristic skill-based game. Full card layout, vertical orientation.
+
+Design:
+- metallic sci-fi frame with beveled edges
+- layered UI panels with depth and shadows
+- {rarity_style}
+- polished, sharp, AAA game UI quality
+- high contrast, crisp edges, no blur
+
+Top section:
+- bold header bar reading "SKILL DECK"
+- level badge on the left: "LVL {level}"
+- XP badge on the right: "XP {xp:,}"
+- name plate below reading "{display_name}" with subtitle "{archetype}"
+
+Portrait:
+- centered character portrait inside a framed window
+- the person is a confident {archetype.lower()}, professional tech leader appearance
+- background: blurred tech dashboards, code, holographic graphs
+- cinematic lighting, rim light, sharp focus
+
+Middle section:
+- "CORE STATS" panel with stat bars:
+{stats_text}
+- each stat has a distinct icon and filled progress bar
+
+Lower sections:
+- left panel titled "GROWTH AREAS" (red-themed): {weaknesses_text}
+- right panel titled "SIGNATURE: {ability_name}" (green/gold-themed): {ability_desc}
+- clean separation between panels
+
+Bottom section:
+- growth focus: "{growth}"
+- flavor text: "{flavor}"
+- horizontal XP progress bar with glow
+- rarity stamp: "{rarity.upper()}"
+
+Style: clean structured UI, resembles a collectible card game interface, precise alignment, symmetrical layout, subtle gradients and metallic textures.
+Quality: ultra detailed, sharp legible typography, no distortions, consistent spacing."""
 
     try:
         image_client = await _get_image_client(settings)
-        image_svc = ImageService(image_client, default_deployment=settings.foundry_image_deployment_name)
-        request = ImageGenerationRequest(
-            prompt=prompt,
-            model_deployment=settings.foundry_image_deployment_name,
-            size="1024x1024",
-        )
+        deployment = settings.foundry_image_deployment_name
 
-        result = await image_svc.generate_card_image(request)
-        if result.success:
-            if result.raw_bytes:
-                import base64
-                return {"base64": base64.b64encode(result.raw_bytes).decode()}
-            elif result.image_url:
-                return {"url": result.image_url}
+        # Strip data URI prefix from base64 if present
+        photo_bytes = None
+        if photo_base64:
+            raw = photo_base64
+            if "," in raw:
+                raw = raw.split(",", 1)[1]
+            try:
+                photo_bytes = b64mod.b64decode(raw)
+            except Exception:
+                logger.warning("Could not decode photo base64, generating without reference")
+
+        if photo_bytes:
+            logger.info("Generating card image with reference photo (%d bytes)", len(photo_bytes))
+            buf = io.BytesIO(photo_bytes)
+            buf.name = "photo.png"
+            response = await image_client.images.edit(
+                model=deployment,
+                image=buf,
+                prompt=prompt,
+                size="1024x1536",
+                n=1,
+            )
         else:
-            logger.warning("Card image generation failed: %s", result.error)
+            logger.info("Generating card image without reference photo")
+            response = await image_client.images.generate(
+                model=deployment,
+                prompt=prompt,
+                size="1024x1536",
+                n=1,
+            )
+
+        image_data = response.data[0]
+        if getattr(image_data, "b64_json", None):
+            logger.info("Card image generated successfully (base64, %d chars)", len(image_data.b64_json))
+            return {"base64": image_data.b64_json}
+        elif image_data.url:
+            logger.info("Card image generated successfully (url)")
+            return {"url": image_data.url}
+        else:
+            logger.warning("Card image response had no data")
     except Exception as e:
         logger.error("Card image generation error: %s", e, exc_info=True)
     return None
@@ -609,6 +672,7 @@ async def process_stateless_turn(
     current_stage_messages: list[dict],
     identity: IdentityContext,
     has_image: bool = False,
+    photo_base64: str | None = None,
     settings: Settings | None = None,
 ) -> AsyncGenerator[str, None]:
     """Process a user turn statelessly and yield AI SDK SSE events.
@@ -616,8 +680,19 @@ async def process_stateless_turn(
     All state is received as arguments and a `data-stateUpdate` event
     is emitted at the end containing the updated state for the client.
     """
+    import time
+    _turn_start = time.monotonic()
     settings = settings or get_settings()
     client = await _get_openai_client(settings)
+
+    logger.info(
+        "TURN START | stage=%s user=%s msg_len=%d completed=%d has_photo=%s",
+        current_stage_id,
+        identity.name or "anon",
+        len(user_text),
+        len(completed_summaries),
+        bool(photo_base64),
+    )
 
     stage = get_stage(current_stage_id)
     if stage is None:
@@ -843,7 +918,7 @@ async def process_stateless_turn(
             yield f'data: {json.dumps({"type": "text-start", "id": text_id + "-img"})}\n\n'
             yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": "\\n\\n✨ Generating your AI card portrait..."})}\n\n'
             try:
-                image_result = await _generate_card_image(client, settings, card_data_result)
+                image_result = await _generate_card_image(client, settings, card_data_result, photo_base64)
                 if image_result:
                     yield f'data: {json.dumps({"type": "data-cardImage", "data": image_result})}\n\n'
                     yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": " Done!"})}\n\n'
