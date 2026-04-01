@@ -284,11 +284,12 @@ async def _get_openai_client(settings: Settings | None = None) -> AsyncAzureOpen
         )
     else:
         from azure.ai.projects.aio import AIProjectClient
-        from azure.identity.aio import DefaultAzureCredential
+        from profile_agent.config.settings import get_azure_credential
 
-        logger.info("OpenAI client: using DefaultAzureCredential via Foundry project → %s",
-                     settings.foundry_project_endpoint)
-        _openai_credential = DefaultAzureCredential()
+        _openai_credential = await get_azure_credential(settings)
+        cred_type = type(_openai_credential).__name__
+        logger.info("OpenAI client: using %s via Foundry project → %s",
+                     cred_type, settings.foundry_project_endpoint)
         project_client = AIProjectClient(
             endpoint=settings.foundry_project_endpoint,
             credential=_openai_credential,
@@ -443,10 +444,11 @@ async def _get_image_client(settings: Settings) -> AsyncAzureOpenAI:
     if _image_client is not None:
         return _image_client
 
-    from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+    from azure.identity.aio import get_bearer_token_provider
+    from urllib.parse import urlparse
+    from profile_agent.config.settings import get_azure_credential
 
     # Derive the services.ai endpoint from the Foundry project endpoint
-    from urllib.parse import urlparse
     host = urlparse(settings.foundry_project_endpoint).hostname or ""
     resource_name = host.split(".")[0] if host else ""
     endpoint = f"https://{resource_name}.services.ai.azure.com" if resource_name else ""
@@ -454,14 +456,16 @@ async def _get_image_client(settings: Settings) -> AsyncAzureOpenAI:
     if not endpoint:
         raise RuntimeError("Cannot derive image endpoint from Foundry project endpoint")
 
-    cred = DefaultAzureCredential()
+    cred = await get_azure_credential(settings)
+    cred_type = type(cred).__name__
     token_provider = get_bearer_token_provider(cred, "https://cognitiveservices.azure.com/.default")
     _image_client = AsyncAzureOpenAI(
         azure_endpoint=endpoint,
         azure_ad_token_provider=token_provider,
         api_version=settings.azure_openai_api_version,
     )
-    logger.info("Image client initialized → %s (deployment=%s)", endpoint, settings.foundry_image_deployment_name)
+    logger.info("Image client initialized → %s (credential=%s, deployment=%s)",
+                endpoint, cred_type, settings.foundry_image_deployment_name)
     return _image_client
 
 

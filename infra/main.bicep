@@ -22,6 +22,9 @@ param imageTag string = 'latest'
 @description('Azure AI Foundry project endpoint (primary AI backend)')
 param foundryProjectEndpoint string
 
+@description('Resource ID of the Azure AI Services account (for RBAC). Leave empty to skip.')
+param cognitiveServicesAccountId string = ''
+
 @description('Entra ID tenant ID (leave empty to disable web UI auth)')
 param entraTenantId string = ''
 
@@ -89,6 +92,16 @@ module containerApps 'modules/container-apps.bicep' = {
     entraTenantId: entraTenantId
     entraClientId: entraClientId
     foundryProjectEndpoint: foundryProjectEndpoint
+  }
+}
+
+// Cognitive Services RBAC — grants Managed Identity access to Azure AI Services
+// for both chat completions and image generation
+module cognitiveServices 'modules/cognitive-services.bicep' = if (!empty(cognitiveServicesAccountId)) {
+  name: 'cognitiveServices'
+  params: {
+    managedIdentityPrincipalId: identities.outputs.principalId
+    cognitiveServicesAccountId: cognitiveServicesAccountId
   }
 }
 
