@@ -49,13 +49,20 @@ export function ChatPanel({
   cardData,
   photoBase64,
 }: ChatPanelProps) {
-  const [input, setInput] = useState("");
+  const [input, setInputRaw] = useState("");
   const [pendingImage, setPendingImage] = useState<File | null>(null);
-  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Wrap setInput to reset slash menu state on every input change
+  const setInput = useCallback((value: string) => {
+    setInputRaw(value);
+    setSlashMenuDismissed(false);
+    setSlashMenuIndex(0);
+  }, []);
 
   // Auto-scroll to the latest message
   useEffect(() => {
@@ -70,27 +77,18 @@ export function ChatPanel({
     }
   }, [input]);
 
-  // Derive filtered slash commands from current input
+  // Derive slash menu state from input (no effects needed)
   const slashFilter = input.startsWith("/") ? input.toLowerCase() : "";
   const filteredCommands = slashFilter
     ? SLASH_COMMANDS.filter((c) => c.command.startsWith(slashFilter))
     : [];
-
-  // Open/close slash menu based on filtered results
-  useEffect(() => {
-    if (filteredCommands.length > 0) {
-      setSlashMenuOpen(true);
-      setSlashMenuIndex(0);
-    } else {
-      setSlashMenuOpen(false);
-    }
-  }, [filteredCommands.length]);
+  const slashMenuOpen = filteredCommands.length > 0 && !slashMenuDismissed;
 
   const acceptSlashCommand = useCallback((cmd: SlashCommand) => {
     setInput(cmd.command + " ");
-    setSlashMenuOpen(false);
+    setSlashMenuDismissed(true);
     textareaRef.current?.focus();
-  }, []);
+  }, [setInput]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -105,7 +103,7 @@ export function ChatPanel({
       onSendMessage(text);
     }
     setInput("");
-    setSlashMenuOpen(false);
+    setSlashMenuDismissed(false);
     // Keep focus in the textarea after sending
     textareaRef.current?.focus();
   };
@@ -155,7 +153,7 @@ export function ChatPanel({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        setSlashMenuOpen(false);
+        setSlashMenuDismissed(true);
         return;
       }
     }
