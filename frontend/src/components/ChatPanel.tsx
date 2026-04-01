@@ -226,9 +226,11 @@ export function ChatPanel({
       </div>
 
       {/* Compaction indicator — between messages and input */}
-      <div className="px-4 py-2">
-        <CompactionIndicator active={!!compacting} />
-      </div>
+      {!!compacting && (
+        <div className="px-4 py-2">
+          <CompactionIndicator active={!!compacting} />
+        </div>
+      )}
 
       {/* Input */}
       <div className="border-t border-zinc-800 p-4">
