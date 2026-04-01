@@ -133,11 +133,96 @@ html, body, #root {
   100% { content: '[>         ]'; }
 }
 
-/* SkillCard hover glow intensification */
+/* ── Skill Card System ─────────────────────────────────────── */
+
+/* Base card frame with metallic feel */
 .skillcard-frame {
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  transition: box-shadow 0.4s ease, border-color 0.4s ease, transform 0.3s ease;
+  perspective: 800px;
 }
+
+/* Rarity: Common — neutral steel */
+.skillcard-frame.rarity-common {
+  border-color: rgba(161, 161, 170, 0.4);
+  box-shadow: 0 0 20px rgba(161, 161, 170, 0.1), 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.skillcard-frame.rarity-common:hover {
+  border-color: rgba(161, 161, 170, 0.7);
+  box-shadow: 0 0 30px rgba(161, 161, 170, 0.2), 0 4px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* Rarity: Rare — blue glow */
+.skillcard-frame.rarity-rare {
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15), 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.skillcard-frame.rarity-rare:hover {
+  border-color: rgba(59, 130, 246, 0.8);
+  box-shadow: 0 0 40px rgba(59, 130, 246, 0.25), 0 0 80px rgba(59, 130, 246, 0.1);
+}
+
+/* Rarity: Epic — purple glow */
+.skillcard-frame.rarity-epic {
+  border-color: rgba(168, 85, 247, 0.5);
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.15), 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.skillcard-frame.rarity-epic:hover {
+  border-color: rgba(168, 85, 247, 0.8);
+  box-shadow: 0 0 40px rgba(168, 85, 247, 0.3), 0 0 80px rgba(168, 85, 247, 0.12);
+}
+
+/* Rarity: Legendary — gold glow */
+.skillcard-frame.rarity-legendary {
+  border-color: rgba(245, 158, 11, 0.6);
+  box-shadow: 0 0 24px rgba(245, 158, 11, 0.2), 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.skillcard-frame.rarity-legendary:hover {
+  border-color: rgba(245, 158, 11, 0.9);
+  box-shadow: 0 0 50px rgba(245, 158, 11, 0.35), 0 0 100px rgba(245, 158, 11, 0.12);
+}
+
+/* Shimmer overlay for epic/legendary */
+@keyframes card-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.card-shimmer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+  border-radius: inherit;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.03) 45%,
+    rgba(255, 255, 255, 0.07) 50%,
+    rgba(255, 255, 255, 0.03) 55%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  animation: card-shimmer 4s ease-in-out infinite;
+}
+
+/* Stat bar fill animation */
+@keyframes stat-fill {
+  from { width: 0; }
+}
+.stat-bar-fill {
+  animation: stat-fill 0.8s ease-out forwards;
+}
+
+/* XP bar animation */
+@keyframes xp-fill {
+  from { width: 0; }
+  to { width: var(--xp-width, 0); }
+}
+.xp-bar-fill {
+  animation: xp-fill 1.2s ease-out 0.3s forwards;
+  width: 0;
+}
+
+/* Hover tilt */
 .skillcard-frame:hover {
-  box-shadow: 0 0 40px rgba(6, 182, 212, 0.25), 0 0 80px rgba(6, 182, 212, 0.1);
-  border-color: rgba(6, 182, 212, 0.8);
+  transform: translateY(-2px);
 }

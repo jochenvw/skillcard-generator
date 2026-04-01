@@ -405,22 +405,32 @@ async def _run_card_generation(
             "card_title": "Skill Deck",
             "level": 5,
             "xp": 3000,
-            "top_expertise": [
-                {"label": "Technology", "score": 7},
-                {"label": "Architecture", "score": 6},
-                {"label": "Leadership", "score": 5},
-            ],
-            "people_i_admire": [],
-            "technical_accomplishments": [],
-            "influential_ideas": [],
-            "strategic_curiosities": [],
-            "grow_into": "Growth",
             "xp_to_next_level": 2000,
-            "flavor_text": "",
+            "rarity": "common",
+            "archetype": "Technologist",
+            "top_stats": [
+                {"id": "technology", "label": "Technology", "value": 7, "icon": "code"},
+                {"id": "architecture", "label": "Architecture", "value": 6, "icon": "brain"},
+                {"id": "leadership", "label": "Leadership", "value": 5, "icon": "users"},
+                {"id": "systems", "label": "Systems", "value": 5, "icon": "cog"},
+            ],
+            "strengths": ["Technical problem solving", "System-level thinking", "Continuous learning"],
+            "weaknesses": ["Breadth over depth", "Delegation skills"],
+            "signature_ability": {"name": "Adaptive Architect", "description": "Shapes systems to match evolving constraints."},
+            "growth_focus": "Expanding horizons",
+            "flavor_text": "Every system tells a story.",
         }
 
     card_data["display_name"] = display_name
     card_data["photo_url"] = None
+    # Ensure new fields have defaults for backward compat
+    card_data.setdefault("rarity", "rare")
+    card_data.setdefault("archetype", "Technologist")
+    card_data.setdefault("top_stats", [])
+    card_data.setdefault("strengths", [])
+    card_data.setdefault("weaknesses", [])
+    card_data.setdefault("signature_ability", None)
+    card_data.setdefault("growth_focus", card_data.get("grow_into", ""))
     return card_data
 
 

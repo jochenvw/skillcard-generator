@@ -26,9 +26,20 @@ export interface SessionState {
   turnCount: number;
 }
 
-export interface CardExpertise {
+// --- Card types ---
+
+export type Rarity = "common" | "rare" | "epic" | "legendary";
+
+export interface CardStat {
+  id: string;
   label: string;
-  score: number;
+  value: number; // 0–10
+  icon?: string;
+}
+
+export interface CardAbility {
+  name: string;
+  description: string;
 }
 
 export interface CardData {
@@ -36,15 +47,26 @@ export interface CardData {
   card_title: string;
   level: number;
   xp: number;
-  top_expertise: CardExpertise[];
-  people_i_admire: string[];
-  technical_accomplishments: string[];
-  influential_ideas: string[];
-  strategic_curiosities: string[];
-  grow_into: string;
   xp_to_next_level: number;
+  rarity: Rarity;
+  archetype: string;
   flavor_text: string;
   photo_url: string | null;
+
+  // Stats & abilities
+  top_stats: CardStat[];
+  strengths: string[];
+  weaknesses: string[];
+  signature_ability: CardAbility | null;
+  growth_focus: string;
+
+  // Legacy fields (kept for backward compat with older sessions)
+  top_expertise?: { label: string; score: number }[];
+  people_i_admire?: string[];
+  technical_accomplishments?: string[];
+  influential_ideas?: string[];
+  strategic_curiosities?: string[];
+  grow_into?: string;
 }
 
 // --- Client-side session model (localStorage) ---

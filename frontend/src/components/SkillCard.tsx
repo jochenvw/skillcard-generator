@@ -1,173 +1,122 @@
-import type { CardData } from "../types";
+import { useRef, useCallback } from "react";
+import { toPng } from "html-to-image";
+import type { CardData, Rarity, CardStat } from "../types";
+import { CardFrame } from "./card/CardFrame";
+import { CardPortrait } from "./card/CardPortrait";
+import { CardStats } from "./card/CardStats";
+import { CardAbilities } from "./card/CardAbilities";
+import { CardProgress } from "./card/CardProgress";
+import { CardBadges } from "./card/CardBadges";
 
 interface SkillCardProps {
   data: CardData;
   photoBase64?: string | null;
 }
 
+/** Normalize data from old or new schema into consistent card props. */
+function normalizeStats(data: CardData): CardStat[] {
+  if (data.top_stats?.length) return data.top_stats;
+  // Backward compat: map legacy top_expertise
+  if (data.top_expertise?.length) {
+    return data.top_expertise.map((e, i) => ({
+      id: `stat_${i}`,
+      label: e.label,
+      value: e.score,
+      icon: "cog",
+    }));
+  }
+  return [];
+}
+
 export function SkillCard({ data, photoBase64 }: SkillCardProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const rarity: Rarity = data.rarity ?? "rare";
+  const archetype = data.archetype ?? data.card_title ?? "Technologist";
+  const stats = normalizeStats(data);
+  const strengths = data.strengths?.length ? data.strengths : [];
+  const weaknesses = data.weaknesses?.length ? data.weaknesses : [];
+  const signatureAbility = data.signature_ability ?? null;
+  const growthFocus = data.growth_focus || data.grow_into || "";
+  const flavorText = data.flavor_text || "";
   const level = data.level ?? 7;
-  const xp = data.xp ?? 5120;
-  const xpNext = data.xp_to_next_level ?? 2880;
-  const xpTotal = xp + xpNext;
-  const xpPercent = Math.round((xp / xpTotal) * 100);
+  const xp = data.xp ?? 5000;
+  const xpNext = data.xp_to_next_level ?? 2000;
+
+  const handleExport = useCallback(async () => {
+    if (!cardRef.current) return;
+    try {
+      const dataUrl = await toPng(cardRef.current, { pixelRatio: 2, cacheBust: true });
+      const link = document.createElement("a");
+      link.download = `skill-deck-${data.display_name?.replace(/\s+/g, "-").toLowerCase() || "card"}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error("Card export failed:", err);
+    }
+  }, [data.display_name]);
 
   return (
-    <div className="w-[420px] mx-auto select-none">
-      {/* Card outer frame */}
-      <div className="relative rounded-2xl border-2 border-cyan-500/60 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 p-1 shadow-[0_0_30px_rgba(6,182,212,0.15)] skillcard-frame crt-scanlines">
-        <div className="rounded-xl border border-slate-700/50 bg-slate-900/90 overflow-hidden">
-
-          {/* Top bar: Level + Title + XP */}
-          <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 border-b border-slate-600/50">
-            <span className="flex items-center gap-1">
-              <span className="bg-amber-500 text-black text-[10px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
-                Lvl {level}
-              </span>
-            </span>
-            <span className="text-lg font-black text-white tracking-wide uppercase">
-              Skill Deck
-            </span>
-            <span className="bg-amber-600 text-white text-[10px] font-bold px-2 py-0.5 rounded">
-              XP {xp.toLocaleString()}
-            </span>
-          </div>
-
-          {/* Name banner */}
-          <div className="text-center py-1.5 bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 border-b border-slate-600/30">
-            <span className="text-base font-semibold text-slate-200 tracking-wide">
-              {data.display_name}
-            </span>
-          </div>
-
-          {/* Photo area */}
-          <div className="relative h-44 bg-gradient-to-br from-indigo-900/80 via-slate-800 to-cyan-900/60 flex items-center justify-center overflow-hidden">
-            <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_30%_40%,rgba(99,102,241,0.4),transparent_50%),radial-gradient(circle_at_70%_60%,rgba(6,182,212,0.3),transparent_50%)]" />
-            {(photoBase64 || data.photo_url) ? (
-              <img
-                src={photoBase64 || data.photo_url || undefined}
-                alt={data.display_name || "Profile"}
-                className="w-28 h-28 rounded-full object-cover border-2 border-cyan-500/30 shadow-lg shadow-cyan-500/20 relative z-10"
-              />
-            ) : (
-              <div className="w-28 h-28 rounded-full bg-slate-700/60 border-2 border-cyan-500/30 flex items-center justify-center text-4xl">
-                {data.display_name?.charAt(0) || "?"}
-              </div>
-            )}
-          </div>
-
-          {/* Top Expertise */}
-          <div className="px-3 py-2 bg-gradient-to-r from-amber-900/30 via-slate-800 to-amber-900/30 border-y border-amber-500/20">
-            <div className="text-center text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-1.5">
-              Top Expertise
-            </div>
-            <div className="flex justify-around">
-              {(data.top_expertise ?? []).map((skill, i) => (
-                <div key={i} className="text-center">
-                  <div className="text-xl font-black text-white">{skill.score}</div>
-                  <div className="text-[9px] text-slate-400 font-medium mt-0.5 max-w-[80px]">
-                    {skill.label}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 4-quadrant grid */}
-          <div className="grid grid-cols-2 gap-px bg-slate-700/30 mx-2 my-2 rounded-lg overflow-hidden">
-            {/* People I Admire */}
-            <QuadrantSection
-              title="People I Admire"
-              items={data.people_i_admire ?? []}
-              color="red"
-              icon="▸"
-            />
-            {/* Technical Accomplishments */}
-            <QuadrantSection
-              title="Technical Accomplishments"
-              items={data.technical_accomplishments ?? []}
-              color="teal"
-              icon="◆"
-            />
-            {/* Influential Ideas */}
-            <QuadrantSection
-              title="Influential Ideas"
-              items={data.influential_ideas ?? []}
-              color="amber"
-              icon="▸"
-            />
-            {/* Strategic Curiosities */}
-            <QuadrantSection
-              title="Strategic Curiosities"
-              items={data.strategic_curiosities ?? []}
-              color="indigo"
-              icon="▸"
-            />
-          </div>
-
-          {/* Learn / Grow Into */}
-          <div className="mx-2 mb-2 rounded-lg bg-gradient-to-r from-amber-900/40 via-amber-800/30 to-amber-900/40 border border-amber-500/20 px-3 py-2">
-            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
-              Learn / Grow Into
-            </div>
-            <div className="text-sm font-bold text-amber-400 italic">
-              {data.grow_into || "Expanding horizons"}
-            </div>
-          </div>
-
-          {/* XP bar at bottom */}
-          <div className="px-3 py-2 bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 border-t border-slate-600/30">
-            <div className="flex items-center justify-between text-[9px] text-slate-500 mb-1">
-              <span className="uppercase tracking-wider font-medium">XP to next Lv</span>
-              <span className="font-bold text-amber-400">{xpNext.toLocaleString()}</span>
-            </div>
-            <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 rounded-full transition-all duration-1000"
-                style={{ width: `${xpPercent}%` }}
-              />
-            </div>
-          </div>
-        </div>
+    <div className="flex flex-col items-center gap-2">
+      <div ref={cardRef}>
+        <CardFrame rarity={rarity}>
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-gradient-to-r from-slate-800/90 via-slate-700/60 to-slate-800/90 border-b border-slate-600/30">
+        <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">
+          Skill Deck
+        </span>
+        <span className="text-base font-black text-white tracking-wide uppercase">
+          {data.display_name}
+        </span>
+        <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">
+          #{String(level).padStart(2, "0")}
+        </span>
       </div>
+
+      <CardPortrait
+        displayName={data.display_name}
+        photoBase64={photoBase64}
+        photoUrl={data.photo_url}
+        archetype={archetype}
+      />
+
+      <div className="border-t border-slate-700/30">
+        <CardStats stats={stats} />
+      </div>
+
+      <div className="border-t border-slate-700/20">
+        <CardAbilities
+          signatureAbility={signatureAbility}
+          strengths={strengths}
+          weaknesses={weaknesses}
+        />
+      </div>
+
+      <div className="border-t border-slate-700/20">
+        <CardBadges
+          rarity={rarity}
+          archetype={archetype}
+          growthFocus={growthFocus}
+          flavorText={flavorText}
+        />
+      </div>
+
+      <CardProgress level={level} xp={xp} xpToNextLevel={xpNext} />
+        </CardFrame>
+      </div>
+
+      {/* Export button */}
+      <button
+        onClick={handleExport}
+        className="text-[10px] text-slate-500 hover:text-slate-300 font-mono uppercase tracking-wider flex items-center gap-1 transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+        Save as PNG
+      </button>
     </div>
   );
 }
 
-function QuadrantSection({
-  title,
-  items,
-  color,
-  icon,
-}: {
-  title: string;
-  items: string[];
-  color: string;
-  icon: string;
-}) {
-  const colorMap: Record<string, string> = {
-    red: "from-red-900/40 to-red-950/20 border-red-500/20 text-red-400",
-    teal: "from-teal-900/40 to-teal-950/20 border-teal-500/20 text-teal-400",
-    amber: "from-amber-900/40 to-amber-950/20 border-amber-500/20 text-amber-400",
-    indigo: "from-indigo-900/40 to-indigo-950/20 border-indigo-500/20 text-indigo-400",
-  };
-  const cls = colorMap[color] || colorMap.teal;
-  const [gradientCls, , titleCls] = cls.split(" ");
-  const borderCls = cls.split(" ")[1];
-
-  return (
-    <div className={`bg-gradient-to-b ${gradientCls} ${borderCls} p-2`}>
-      <div className={`text-[8px] font-black uppercase tracking-widest mb-1.5 ${titleCls}`}>
-        {title}
-      </div>
-      <div className="space-y-0.5">
-        {items.slice(0, 3).map((item, i) => (
-          <div key={i} className="text-[10px] text-slate-300 flex items-start gap-1">
-            <span className="text-[8px] mt-0.5 opacity-60">{icon}</span>
-            <span>{item}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
