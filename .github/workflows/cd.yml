@@ -80,11 +80,25 @@ jobs:
             baseName=profileagent
             imageTag=${{ steps.tag.outputs.value }}
             foundryProjectEndpoint=${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
-            cognitiveServicesAccountId=${{ secrets.COGNITIVE_SERVICES_ACCOUNT_ID }}
             entraTenantId=${{ secrets.ENTRA_TENANT_ID || '' }}
             entraClientId=${{ secrets.ENTRA_CLIENT_ID || '' }}
             entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET || '' }}
           failOnStdErr: false
+
+      # ── 3. Ensure Cognitive Services RBAC (cross-resource-group) ───
+      - name: Ensure Cognitive Services RBAC
+        if: ${{ secrets.COGNITIVE_SERVICES_ACCOUNT_ID != '' }}
+        run: |
+          IDENTITY_PRINCIPAL=$(az identity show \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --name profileagent-dev-identity \
+            --query principalId -o tsv)
+          # Assign Cognitive Services User (idempotent — no error if exists)
+          az role assignment create \
+            --assignee "$IDENTITY_PRINCIPAL" \
+            --role "Cognitive Services User" \
+            --scope "${{ secrets.COGNITIVE_SERVICES_ACCOUNT_ID }}" \
+            2>/dev/null || true
 
       - name: Print app URL
         run: |

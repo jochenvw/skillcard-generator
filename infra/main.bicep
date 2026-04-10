@@ -97,12 +97,10 @@ module containerApps 'modules/container-apps.bicep' = {
 
 // Cognitive Services RBAC — grants Managed Identity access to Azure AI Services
 // for both chat completions and image generation
-// The AI Services account may be in a different resource group, so we scope the module accordingly.
-var cognitiveServicesResourceGroup = !empty(cognitiveServicesAccountId) ? split(cognitiveServicesAccountId, '/')[4] : resourceGroup().name
-
+// Note: when the AI Services account is in a DIFFERENT resource group, use the
+// CD workflow's "Ensure Cognitive Services RBAC" step instead of this module.
 module cognitiveServices 'modules/cognitive-services.bicep' = if (!empty(cognitiveServicesAccountId)) {
   name: 'cognitiveServices'
-  scope: resourceGroup(cognitiveServicesResourceGroup)
   params: {
     managedIdentityPrincipalId: identities.outputs.principalId
     cognitiveServicesAccountId: cognitiveServicesAccountId
