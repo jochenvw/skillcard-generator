@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.118",
+    "@azure/msal-browser": "^5.6.3",
+    "@azure/msal-react": "^5.2.1",
     "@tailwindcss/vite": "^4.2.2",
     "ai": "^6.0.116",
     "html-to-image": "^1.11.13",

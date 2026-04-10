@@ -1,61 +1,68 @@
-"""Entra ID (Azure AD) authentication middleware using MSAL."""
+"""Entra ID (Azure AD) authentication — JWT validation for SPA access tokens."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-import msal
-from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBearer
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from jwt import PyJWKClient
 
 from profile_agent.config.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-_bearer_scheme = HTTPBearer(auto_error=False)
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# Module-level cache for the MSAL confidential client
-_msal_app: msal.ConfidentialClientApplication | None = None
+# Module-level JWKS client cache (thread-safe, handles key rotation)
+_jwks_client: PyJWKClient | None = None
 
 
-def _get_msal_app(settings: Settings) -> msal.ConfidentialClientApplication:
-    global _msal_app
-    if _msal_app is None:
-        authority = f"https://login.microsoftonline.com/{settings.entra_tenant_id}"
-        _msal_app = msal.ConfidentialClientApplication(
-            client_id=settings.entra_client_id,
-            client_credential=settings.entra_client_secret,
-            authority=authority,
-        )
-    return _msal_app
+def _get_jwks_client(tenant_id: str) -> PyJWKClient:
+    global _jwks_client
+    if _jwks_client is None:
+        jwks_url = f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
+        _jwks_client = PyJWKClient(jwks_url, cache_keys=True)
+    return _jwks_client
+
+
+@router.get("/config")
+async def auth_config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """Public endpoint — returns auth configuration for the SPA."""
+    if not settings.entra_client_id or not settings.entra_tenant_id:
+        return {"authEnabled": False}
+
+    return {
+        "authEnabled": True,
+        "clientId": settings.entra_client_id,
+        "authority": f"https://login.microsoftonline.com/{settings.entra_tenant_id}",
+        "apiScopes": [f"api://{settings.entra_client_id}/access_as_user"],
+    }
 
 
 async def validate_token(request: Request, settings: Settings = Depends(get_settings)) -> dict[str, Any]:
-    """Validate the Bearer token from the Authorization header.
+    """Validate the Bearer access token from the Authorization header.
 
     Returns the decoded token claims if valid.
-    Raises 401 if missing/invalid.
+    In dev mode with auth bypass enabled, allows anonymous access.
+    In all other cases, requires a valid token — fails closed.
     """
     if not settings.entra_client_id:
-        # Auth not configured — allow anonymous in dev
-        return {"sub": "anonymous", "name": "Anonymous User"}
+        if settings.is_dev and settings.dev_auth_bypass:
+            return {"sub": "anonymous", "name": "Anonymous User", "preferred_username": "dev@localhost"}
+        if settings.is_dev:
+            logger.warning("Auth not configured. Set ENTRA_CLIENT_ID or enable DEV_AUTH_BYPASS=true.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication not configured")
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
 
     token = auth_header[7:]
-    app = _get_msal_app(settings)
 
-    # Validate the token using MSAL's token cache / decode
-    # In production, use the well-known OIDC endpoint to validate
     try:
-        import jwt
-        from jwt import PyJWKClient
-
-        jwks_url = f"https://login.microsoftonline.com/{settings.entra_tenant_id}/discovery/v2.0/keys"
-        jwks_client = PyJWKClient(jwks_url)
+        jwks_client = _get_jwks_client(settings.entra_tenant_id)
         signing_key = jwks_client.get_signing_key_from_jwt(token)
 
         claims = jwt.decode(
@@ -66,9 +73,15 @@ async def validate_token(request: Request, settings: Settings = Depends(get_sett
             issuer=f"https://login.microsoftonline.com/{settings.entra_tenant_id}/v2.0",
         )
         return claims
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired") from None
+    except jwt.InvalidAudienceError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid audience") from None
+    except jwt.InvalidIssuerError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid issuer") from None
     except Exception as e:
         logger.warning("Token validation failed: %s", e)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
 
 
 async def get_current_user(claims: dict[str, Any] = Depends(validate_token)) -> dict[str, Any]:

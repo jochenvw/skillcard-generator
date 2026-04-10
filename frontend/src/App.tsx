@@ -1,6 +1,7 @@
 import { useRef, useCallback, useState } from "react";
 import type { UIMessage } from "ai";
 import { useLocalSession } from "./hooks/useLocalSession";
+import { useAuth } from "./auth";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { ChatPanel } from "./components/ChatPanel";
 import { SummaryPanel } from "./components/SummaryPanel";
@@ -46,6 +47,7 @@ export default function App() {
     resetSession,
     exportSession,
   } = useLocalSession();
+  const { user, getAuthHeaders, signOut } = useAuth();
 
   // Display messages — seeded from currentStageMessages on first render
   const [messages, setMessages] = useState<UIMessage[]>(() =>
@@ -110,9 +112,10 @@ export default function App() {
       ]);
 
       try {
+        const authHeaders = await getAuthHeaders();
         const res = await fetch("/api/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...authHeaders },
           body: JSON.stringify(payload),
         });
 
@@ -237,7 +240,7 @@ export default function App() {
         setIsStreaming(false);
       }
     },
-    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData],
+    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData, getAuthHeaders],
   );
 
   // ── Photo selected in ChatPanel ─────────────────────────────────────────
@@ -327,6 +330,28 @@ export default function App() {
             <span className="terminal-cursor text-cyan-400 ml-0.5">▌</span>
           </h1>
           <div className="flex items-center gap-1.5">
+            {/* User info */}
+            {user && (
+              <span className="text-[11px] text-zinc-500 font-mono mr-2 hidden sm:inline truncate max-w-[160px]" title={user.email}>
+                {user.email}
+              </span>
+            )}
+
+            {/* Sign out */}
+            {user && (
+              <button
+                onClick={signOut}
+                title="Sign out"
+                className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+              </button>
+            )}
+
             {/* Export */}
             <button
               onClick={exportSession}

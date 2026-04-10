@@ -39,6 +39,10 @@ def create_fastapi_app() -> FastAPI:
     from profile_agent.api.chat import router as chat_router
     app.include_router(chat_router, prefix="/api")
 
+    # Auth config endpoint (public — returns client ID / tenant for SPA)
+    from profile_agent.api.auth import router as auth_router
+    app.include_router(auth_router)
+
     # Serve React frontend (built static files)
     import os
     from pathlib import Path

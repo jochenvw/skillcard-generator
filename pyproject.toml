@@ -24,6 +24,7 @@ dependencies = [
     "fastapi>=0.135.0",
     "uvicorn[standard]>=0.34.0",
     "msal>=1.31.0",
+    "PyJWT[crypto]>=2.0",
     "python-multipart>=0.0.18",
     # Core utilities
     "pydantic>=2.10.0",
