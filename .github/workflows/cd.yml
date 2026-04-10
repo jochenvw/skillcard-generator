@@ -80,6 +80,7 @@ jobs:
             baseName=profileagent
             imageTag=${{ steps.tag.outputs.value }}
             foundryProjectEndpoint=${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+            cognitiveServicesAccountId=${{ secrets.COGNITIVE_SERVICES_ACCOUNT_ID }}
             entraTenantId=${{ secrets.ENTRA_TENANT_ID || '' }}
             entraClientId=${{ secrets.ENTRA_CLIENT_ID || '' }}
             entraClientSecret=${{ secrets.ENTRA_CLIENT_SECRET || '' }}
