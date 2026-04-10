@@ -87,8 +87,12 @@ jobs:
 
       # ── 3. Ensure Cognitive Services RBAC (cross-resource-group) ───
       - name: Ensure Cognitive Services RBAC
-        if: ${{ secrets.COGNITIVE_SERVICES_ACCOUNT_ID != '' }}
         run: |
+          SCOPE="${{ secrets.COGNITIVE_SERVICES_ACCOUNT_ID }}"
+          if [ -z "$SCOPE" ]; then
+            echo "COGNITIVE_SERVICES_ACCOUNT_ID not set — skipping RBAC"
+            exit 0
+          fi
           IDENTITY_PRINCIPAL=$(az identity show \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
             --name profileagent-dev-identity \
@@ -97,7 +101,7 @@ jobs:
           az role assignment create \
             --assignee "$IDENTITY_PRINCIPAL" \
             --role "Cognitive Services User" \
-            --scope "${{ secrets.COGNITIVE_SERVICES_ACCOUNT_ID }}" \
+            --scope "$SCOPE" \
             2>/dev/null || true
 
       - name: Print app URL
