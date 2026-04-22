@@ -37,6 +37,12 @@ export function useLocalSession() {
         if (!Array.isArray(parsed.cliftonStrengths)) {
           parsed.cliftonStrengths = [];
         }
+        // Discard cardData persisted under the legacy gamey schema
+        // (top_stats / weaknesses / signature_ability / level / xp / rarity).
+        // It would crash the new SkillCard which expects strengths/inspirations/etc.
+        if (parsed.cardData && !Array.isArray((parsed.cardData as { strengths?: unknown }).strengths)) {
+          parsed.cardData = null;
+        }
         return parsed;
       } catch {
         const fresh = createFreshSession();

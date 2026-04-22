@@ -2,7 +2,7 @@ type Accent = "blue" | "purple" | "default";
 
 interface CardPanelProps {
   title: string;
-  items: string[];
+  items: string[] | undefined;
   accent?: Accent;
 }
 
@@ -29,7 +29,7 @@ const ACCENT_STYLES: Record<Accent, { bg: string; border: string; label: string;
 
 export function CardPanel({ title, items, accent = "default" }: CardPanelProps) {
   const styles = ACCENT_STYLES[accent];
-  const display = items.slice(0, 5);
+  const display = (items ?? []).slice(0, 5);
 
   return (
     <div className={`rounded-lg ${styles.bg} border ${styles.border} px-2.5 py-2 min-h-[88px]`}>
