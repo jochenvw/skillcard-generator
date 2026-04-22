@@ -47,9 +47,39 @@ export function WelcomeBanner() {
           </div>
         </div>
 
+        {/* Quick-start hints */}
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-left space-y-2.5">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-cyan-400/70">
+            Quick start
+          </p>
+          <ul className="space-y-2 text-xs text-zinc-400 leading-relaxed">
+            <li className="flex gap-2">
+              <span className="text-violet-400 shrink-0">📷</span>
+              <span>
+                <span className="text-zinc-200">Upload a profile picture</span>{" "}
+                — used as the portrait reference for your AI-generated card.
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-violet-400 shrink-0">📄</span>
+              <span>
+                <span className="text-zinc-200">Drop in a CliftonStrengths PDF</span>{" "}
+                — we extract your top themes locally; the file never leaves your browser.
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-violet-400 shrink-0">💬</span>
+              <span>
+                <span className="text-zinc-200">Or just start talking</span>{" "}
+                — say hi and answer a few questions to build your deck.
+              </span>
+            </li>
+          </ul>
+        </div>
+
         {/* CTA Hint */}
         <p className="text-xs text-zinc-600 pt-2 animate-pulse">
-          ↓ Type your first message below to begin…
+          ↓ Use the buttons or type your first message below…
         </p>
       </div>
     </div>

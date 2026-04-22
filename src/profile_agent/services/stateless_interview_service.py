@@ -73,30 +73,81 @@ def get_first_stage() -> StageDefinition:
 # ── Identity extraction (same as interview_service) ──
 
 
+_ROLE_STOP_WORDS = {
+    "engineer", "architect", "developer", "consultant", "manager", "lead",
+    "solution", "senior", "junior", "principal", "staff", "director", "head",
+    "designer", "scientist", "analyst", "founder", "ceo", "cto", "cio", "vp",
+    "for", "at", "from", "in", "of", "the", "a", "an", "and",
+}
+
+_NON_NAME_PHRASES = {
+    "skip", "upload", "later", "no", "nope", "yes", "y", "n",
+    "ok", "okay", "thanks", "thank you", "great", "perfect", "cool", "nice",
+    "looks good", "sounds good", "looks great", "sounds great", "got it",
+    "alright", "sure", "fine", "good", "awesome", "done",
+}
+
+
+_NAME_PARTICLES = {"van", "von", "de", "der", "den", "del", "della", "di", "da", "le", "la", "el", "bin", "ibn", "al"}
+
+
+def _clean_name_candidate(raw: str) -> str | None:
+    parts: list[str] = []
+    for tok in raw.replace(",", " ").split():
+        # Stop at first dash, role marker, or "is/am/work" verb
+        low = tok.lower().strip(".,;:!?")
+        if low in {"-", "—", "–"} or low in _ROLE_STOP_WORDS:
+            break
+        if not low or not all(ch.isalpha() or ch in "-'" for ch in low):
+            break
+        parts.append(low)
+        if len(parts) >= 4:
+            break
+    if not parts:
+        return None
+    return " ".join(p if p in _NAME_PARTICLES else p.capitalize() for p in parts)
+
+
+def _extract_title_from_role(role_text: str) -> str | None:
+    """Pull a clean title like 'Senior Solution Engineer' from a free-form role sentence."""
+    text = role_text.strip()
+    if not text:
+        return None
+    # If there's a dash, prefer the chunk AFTER the first dash (typical "Name - Title for Company" form).
+    dash_match = re.search(r"\s*[-–—]\s*", text)
+    cleaned = text[dash_match.end():] if dash_match else text
+    # Drop any leading "I'm a / I am / I work as / my role is"
+    cleaned = re.sub(r"^(?:i['\u2019]m|i am|i work as|my role is)\s+(?:a |an )?", "", cleaned, flags=re.I)
+    # Cut at "for ", "at ", connectors that introduce employer/team
+    cleaned = re.split(r"\s+(?:for|at|with|in)\s+", cleaned, maxsplit=1, flags=re.I)[0]
+    cleaned = cleaned.strip(" .,-—–")
+    if 2 <= len(cleaned.split()) <= 8:
+        return cleaned
+    return None
+
+
 def _extract_name_and_role(user_text: str) -> tuple[str | None, str | None]:
     text = user_text.strip()
     lowered = text.lower()
     name: str | None = None
     role: str | None = None
-    control_words = {"skip", "upload", "later", "no", "nope", "yes", "y", "n"}
 
-    m = re.search(r"\bmy name is\s+([a-z][a-z\s\-']{1,80})", lowered)
+    m = re.search(r"\bmy name is\s+(.{1,80})", lowered)
     if m:
-        candidate = m.group(1).strip(" .,")
-        candidate = re.split(r"\b(?:and|i am|i'm)\b", candidate, maxsplit=1)[0].strip(" .,")
-        if 1 <= len(candidate.split()) <= 4:
-            name = " ".join(w.capitalize() for w in candidate.split())
-    elif 1 <= len(text.split()) <= 4 and all(ch.isalpha() or ch.isspace() or ch in "-'" for ch in text):
-        if lowered not in control_words:
-            name = " ".join(w.capitalize() for w in text.split())
+        name = _clean_name_candidate(m.group(1))
 
     if name is None:
-        m2 = re.search(r"\b(?:i am|i'm)\s+([a-z][a-z\s\-']{1,30})\b", lowered)
+        m2 = re.search(r"\b(?:i am|i'm)\s+([a-z][a-z\s\-']{1,30})", lowered)
         if m2:
             candidate2 = m2.group(1).strip(" .,")
-            if not candidate2.startswith(("a ", "an ", "the ")) and 1 <= len(candidate2.split()) <= 3:
-                if candidate2 not in control_words:
-                    name = " ".join(w.capitalize() for w in candidate2.split())
+            if not candidate2.startswith(("a ", "an ", "the ")):
+                name = _clean_name_candidate(candidate2)
+
+    if name is None and 1 <= len(text.split()) <= 4 \
+            and all(ch.isalpha() or ch.isspace() or ch in "-'" for ch in text) \
+            and lowered not in _NON_NAME_PHRASES \
+            and not any(tok.lower() in _ROLE_STOP_WORDS for tok in text.split()):
+        name = " ".join(w.capitalize() for w in text.split())
 
     role_markers = (
         "i work", "i'm a", "i'm ", "i am a", "i am an", "i am ",
@@ -114,6 +165,7 @@ def _extract_name_and_role(user_text: str) -> tuple[str | None, str | None]:
 class IdentityContext:
     name: str = ""
     role: str = ""
+    title: str = ""
     photo_status: str = "unknown"
 
 
@@ -152,22 +204,73 @@ class StateUpdate:
 
 
 def _identity_dict(ctx: IdentityContext) -> dict:
-    return {"name": ctx.name, "role": ctx.role, "photoStatus": ctx.photo_status}
+    return {"name": ctx.name, "role": ctx.role, "title": ctx.title, "photoStatus": ctx.photo_status}
+
+
+_IDENTITY_EXTRACTION_PROMPT = """\
+Extract the speaker's full name and current job title from the message below.
+
+Rules:
+- "name" = the person's full name only (no titles, no company). Use their original
+  capitalization for particles ("van", "von", "de", "la", "der" stay lowercase).
+- "title" = their job/role (e.g. "Senior Solution Engineer", "Staff Engineer",
+  "Product Manager", "VP of Engineering"). Drop the company name ("at Microsoft NL"
+  → just the title). Drop articles ("a", "an", "the"). 2–8 words.
+- If a field is not stated or unclear, return null for that field.
+- Do NOT invent. Do NOT use defaults. If the user just said "ok" or "looks good",
+  return {"name": null, "title": null}.
+
+Output **only** JSON: {"name": string|null, "title": string|null}
+
+Message:
+\"\"\"$message\"\"\"
+"""
+
+
+async def _extract_identity_with_llm(
+    user_text: str,
+    client: AsyncAzureOpenAI,
+    settings: Settings,
+) -> tuple[str | None, str | None]:
+    """LLM-based name/title extraction. Returns (name, title) or (None, None)."""
+    text = user_text.strip()
+    if not text or len(text) < 2:
+        return None, None
+    try:
+        prompt = _IDENTITY_EXTRACTION_PROMPT.replace("$message", text[:1000])
+        resp = await client.chat.completions.create(
+            model=settings.effective_azure_openai_deployment,
+            messages=[
+                {"role": "system", "content": "You are a strict JSON extractor. Output only valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            max_completion_tokens=120,
+        )
+        raw = resp.choices[0].message.content or ""
+        data = _extract_json(raw) or {}
+        name = data.get("name")
+        title = data.get("title")
+        name = name.strip() or None if isinstance(name, str) else None
+        title = title.strip() or None if isinstance(title, str) else None
+        return name, title
+    except Exception as exc:
+        logger.warning("LLM identity extraction failed: %s", exc)
+        return None, None
 
 
 def update_identity(identity: IdentityContext, user_text: str, current_stage_id: str, has_image: bool = False) -> IdentityContext:
-    """Return an updated copy of identity based on user text."""
-    new = IdentityContext(name=identity.name, role=identity.role, photo_status=identity.photo_status)
+    """Return an updated copy of identity based on user text (regex fast path)."""
+    new = IdentityContext(
+        name=identity.name,
+        role=identity.role,
+        title=identity.title,
+        photo_status=identity.photo_status,
+    )
     lowered = user_text.lower()
 
     if has_image:
         new.photo_status = "uploaded"
-
-    extracted_name, extracted_role = _extract_name_and_role(user_text)
-    if extracted_name and not new.name:
-        new.name = extracted_name
-    if extracted_role and not new.role:
-        new.role = extracted_role
 
     if (current_stage_id == "introduction"
             and not new.role
@@ -180,6 +283,38 @@ def update_identity(identity: IdentityContext, user_text: str, current_stage_id:
     ):
         new.photo_status = "skipped"
 
+    return new
+
+
+async def update_identity_async(
+    identity: IdentityContext,
+    user_text: str,
+    current_stage_id: str,
+    has_image: bool,
+    client: AsyncAzureOpenAI,
+    settings: Settings,
+) -> IdentityContext:
+    """LLM-augmented identity update.
+
+    Calls update_identity() for the cheap stuff (photo status, raw role text),
+    then asks the LLM to extract name + title from the message — but only
+    during the introduction stage and only if name or title are still missing.
+    """
+    new = update_identity(identity, user_text, current_stage_id, has_image)
+
+    needs_extraction = (
+        current_stage_id == "introduction"
+        and (not new.name or not new.title)
+        and len(user_text.strip()) >= 2
+    )
+    if not needs_extraction:
+        return new
+
+    extracted_name, extracted_title = await _extract_identity_with_llm(user_text, client, settings)
+    if extracted_name and not new.name:
+        new.name = extracted_name
+    if extracted_title and not new.title:
+        new.title = extracted_title
     return new
 
 
@@ -364,6 +499,8 @@ async def _run_card_generation(
     display_name: str,
     photo_status: str,
     clifton_strengths: list[str] | None = None,
+    completed_summaries: list[CompletedStageSummary] | None = None,
+    role_text: str | None = None,
 ) -> dict:
     archetype = "Technologist"
     top_strengths = "[]"
@@ -386,14 +523,26 @@ async def _run_card_generation(
     clifton_list = [s for s in (clifton_strengths or []) if isinstance(s, str) and s.strip()]
     clifton_block = "\n".join(f"• {s.strip()}" for s in clifton_list) if clifton_list else ""
 
+    # Raw per-stage evidence — needed because the synthesis JSON above only
+    # captures technical skill dimensions and drops the rich content about
+    # heroes, books, aspirations etc.
+    if completed_summaries:
+        stage_evidence = "\n\n".join(
+            f"### [{s.id}]\n{s.summary}" for s in completed_summaries if s.summary
+        )
+    else:
+        stage_evidence = "(no stage summaries available)"
+
     card_prompt = render_template(
         "card_generation",
         display_name=display_name,
+        display_title=_extract_title_from_role(role_text or "") or "",
         archetype=archetype,
         top_strengths=top_strengths,
         skill_matrix=skill_matrix,
         evidence_highlights=evidence_highlights or "No highlights available.",
         clifton_strengths=clifton_block,
+        stage_evidence=stage_evidence,
     )
     card_response = await client.chat.completions.create(
         model=settings.effective_azure_openai_deployment,
@@ -413,6 +562,12 @@ async def _run_card_generation(
 
     if not card_data.get("name"):
         card_data["name"] = display_name
+    extracted_title = _extract_title_from_role(role_text or "") if role_text else None
+    current_title = (card_data.get("title") or "").strip()
+    # Force the parsed-from-introduction title to win over the LLM's generic
+    # "Technologist" archetype when the user explicitly stated their title.
+    if extracted_title and (not current_title or current_title.lower() in {"technologist", "technology"}):
+        card_data["title"] = extracted_title
     if clifton_list and not card_data.get("clifton_strengths"):
         card_data["clifton_strengths"] = clifton_list
 
@@ -497,6 +652,7 @@ async def _generate_card_image(client, settings: Settings, card_data: dict, phot
     accomplishments = card_data.get("accomplishments") or []
     growth_focus = card_data.get("growth_focus") or ""
     flavor_text = card_data.get("flavor_text") or ""
+    portrait_hint = card_data.get("portrait_hint") or ""
 
     prompt = f"""A premium, high-end digital trading card for a futuristic skill-based game. Full card layout, vertical orientation.
 
@@ -514,7 +670,7 @@ Top section:
 Portrait:
 - centered character portrait inside a framed window
 - the person is a confident professional, {title} appearance
-- background: blurred tech dashboards, code, holographic graphs
+- {portrait_hint if portrait_hint else "background: blurred tech dashboards, code, holographic graphs"}
 - cinematic lighting, rim light, sharp focus
 
 Lower sections (six panels in a 2-column grid, consistent spacing, grid-aligned):
@@ -548,6 +704,7 @@ Quality: ultra detailed, sharp legible typography, no distortions, consistent sp
     try:
         image_client = await _get_image_client(settings)
         deployment = settings.foundry_image_deployment_name
+        size = "1024x1536"
 
         # Strip data URI prefix from base64 if present
         photo_bytes = None
@@ -560,6 +717,12 @@ Quality: ultra detailed, sharp legible typography, no distortions, consistent sp
             except Exception:
                 logger.warning("Could not decode photo base64, generating without reference")
 
+        # Content-addressed cache lookup — same prompt+photo+model+size = cache hit
+        from profile_agent.services import image_cache
+        cached = image_cache.get(prompt, photo_bytes, deployment, size)
+        if cached:
+            return {"base64": cached}
+
         if photo_bytes:
             logger.info("Generating card image with reference photo (%d bytes)", len(photo_bytes))
             buf = io.BytesIO(photo_bytes)
@@ -568,7 +731,7 @@ Quality: ultra detailed, sharp legible typography, no distortions, consistent sp
                 model=deployment,
                 image=buf,
                 prompt=prompt,
-                size="1024x1536",
+                size=size,
                 n=1,
             )
         else:
@@ -576,13 +739,14 @@ Quality: ultra detailed, sharp legible typography, no distortions, consistent sp
             response = await image_client.images.generate(
                 model=deployment,
                 prompt=prompt,
-                size="1024x1536",
+                size=size,
                 n=1,
             )
 
         image_data = response.data[0]
         if getattr(image_data, "b64_json", None):
             logger.info("Card image generated successfully (base64, %d chars)", len(image_data.b64_json))
+            image_cache.put(prompt, photo_bytes, deployment, size, image_data.b64_json)
             return {"base64": image_data.b64_json}
         elif image_data.url:
             logger.info("Card image generated successfully (url)")
@@ -710,8 +874,10 @@ async def process_stateless_turn(
         stage = get_first_stage()
         current_stage_id = stage.id
 
-    # Update identity from user text
-    identity = update_identity(identity, user_text, current_stage_id, has_image)
+    # Update identity from user text (LLM-augmented during the intro stage)
+    identity = await update_identity_async(
+        identity, user_text, current_stage_id, has_image, client, settings,
+    )
 
     # Count turns in the current stage (each pair of user+assistant = 1 turn)
     turn_count = len([m for m in current_stage_messages if m.get("role") == "assistant"])
@@ -924,6 +1090,8 @@ async def process_stateless_turn(
                 display_name,
                 identity.photo_status,
                 clifton_strengths=clifton_strengths,
+                completed_summaries=completed_summaries,
+                role_text=identity.title or identity.role,
             )
 
             status_msg = f"Your **{card_data_result.get('name', 'Skill')} Deck** card is ready! Check it out below."

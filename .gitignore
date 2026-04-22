@@ -63,3 +63,6 @@ frontend/dist/
 local_assets/
 .files/
 env.zip
+
+# Local card-image cache (content-addressed, regenerates on input change)
+.cache/

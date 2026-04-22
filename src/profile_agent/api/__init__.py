@@ -49,6 +49,14 @@ def create_fastapi_app() -> FastAPI:
     from profile_agent.api.strengths import router as strengths_router
     app.include_router(strengths_router, prefix="/api")
 
+    # Demo card endpoint (returns pre-baked persona + generated image)
+    from profile_agent.api.demo import router as demo_router
+    app.include_router(demo_router, prefix="/api")
+
+    # Regenerate card from existing session state (no interview re-run)
+    from profile_agent.api.regenerate import router as regenerate_router
+    app.include_router(regenerate_router, prefix="/api")
+
     # Auth config endpoint (public — returns client ID / tenant for SPA)
     from profile_agent.api.auth import router as auth_router
     app.include_router(auth_router)

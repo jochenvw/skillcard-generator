@@ -15,12 +15,14 @@ interface SlashCommand {
 }
 
 const SLASH_COMMANDS: SlashCommand[] = [
-  { command: "/next",     label: "Next stage",   description: "Move on to the next interview stage" },
-  { command: "/skip",     label: "Skip stage",   description: "Skip the current stage" },
-  { command: "/progress", label: "Progress",     description: "See where you are in the interview" },
-  { command: "/card",     label: "Generate card", description: "Skip ahead and generate your skill card now" },
-  { command: "/done",     label: "Done",         description: "Finalize and generate your skill card" },
-  { command: "/restart",  label: "Start over",   description: "Reset and start from the beginning" },
+  { command: "/next",       label: "Next stage",     description: "Move on to the next interview stage" },
+  { command: "/skip",       label: "Skip stage",     description: "Skip the current stage" },
+  { command: "/progress",   label: "Progress",       description: "See where you are in the interview" },
+  { command: "/card",       label: "Generate card",  description: "Skip ahead and generate your skill card now" },
+  { command: "/regenerate", label: "Regenerate card", description: "Re-run card generation from your existing answers" },
+  { command: "/demo",       label: "Demo persona",   description: "Open the over-the-top corporate demo card" },
+  { command: "/done",       label: "Done",           description: "Finalize and generate your skill card" },
+  { command: "/restart",    label: "Start over",     description: "Reset and start from the beginning" },
 ];
 
 interface ChatPanelProps {
@@ -37,6 +39,8 @@ interface ChatPanelProps {
   onPdfProcessingStart?: (filename: string) => void;
   onPdfStrengths?: (resp: StrengthsResponse) => void;
   onPdfError?: (msg: string) => void;
+  onRegenerateCard?: () => void;
+  regenerating?: boolean;
 }
 
 function getMessageText(message: UIMessage): string {
@@ -60,6 +64,8 @@ export function ChatPanel({
   onPdfProcessingStart,
   onPdfStrengths,
   onPdfError,
+  onRegenerateCard,
+  regenerating,
 }: ChatPanelProps) {
   const [input, setInputRaw] = useState("");
   const [pendingImage, setPendingImage] = useState<File | null>(null);
@@ -92,6 +98,16 @@ export function ChatPanel({
     }
   }, [input]);
 
+  // Re-focus the textarea when streaming finishes — guarantees the user can
+  // keep typing without reaching for the mouse after a response arrives.
+  const prevLoadingRef = useRef(isLoading);
+  useEffect(() => {
+    if (prevLoadingRef.current && !isLoading) {
+      textareaRef.current?.focus();
+    }
+    prevLoadingRef.current = isLoading;
+  }, [isLoading]);
+
   // Derive slash menu state from input (no effects needed)
   const slashFilter = input.startsWith("/") ? input.toLowerCase() : "";
   const filteredCommands = slashFilter
@@ -109,6 +125,22 @@ export function ChatPanel({
     e.preventDefault();
     const text = input.trim();
     if ((!text && !pendingImage) || isLoading) return;
+
+    // Client-side slash commands — handled locally, not sent to the backend.
+    const firstWord = text.split(/\s+/, 1)[0].toLowerCase();
+    if (firstWord === "/demo") {
+      setInput("");
+      setSlashMenuDismissed(false);
+      window.location.assign("/demo");
+      return;
+    }
+    if (firstWord === "/regenerate") {
+      setInput("");
+      setSlashMenuDismissed(false);
+      textareaRef.current?.focus();
+      onRegenerateCard?.();
+      return;
+    }
 
     if (pendingImage) {
       onImageUploaded?.();
@@ -272,7 +304,7 @@ export function ChatPanel({
               {cardData && (
                 <SkillCard data={cardData} photoBase64={photoBase64} />
               )}
-              {cardImageSrc && (
+              {cardImageSrc ? (
                 <div className="flex flex-col items-center gap-2">
                   <div className="w-[420px] rounded-2xl overflow-hidden border-2 border-violet-500/30 shadow-lg shadow-violet-500/10 skillcard-frame rarity-epic">
                     <img
@@ -285,8 +317,25 @@ export function ChatPanel({
                     ✨ AI-Generated Portrait
                   </span>
                 </div>
-              )}
+              ) : cardData ? (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-[420px] aspect-[2/3] rounded-2xl border-2 border-violet-500/30 shadow-lg shadow-violet-500/10 skillcard-frame rarity-epic bg-gradient-to-br from-slate-900 via-violet-950/40 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+                    <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_50%_50%,rgba(139,92,246,0.25),transparent_60%)] animate-pulse" />
+                    <div className="relative z-10 w-full">
+                      <CardGeneratingIndicator active variant="image" />
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-violet-400/70 font-mono uppercase tracking-wider">
+                    ✨ Forging AI Portrait...
+                  </span>
+                </div>
+              ) : null}
             </div>
+            {regenerating && (
+              <div className="mt-3 text-center text-xs font-mono uppercase tracking-wider text-violet-300/80">
+                ⟳ Regenerating card…
+              </div>
+            )}
           </div>
         )}
 
@@ -408,8 +457,7 @@ export function ChatPanel({
             onKeyDown={handleKeyDown}
             placeholder="Type a message or / for commands…"
             rows={1}
-            disabled={isLoading || pdfProcessing}
-            className="flex-1 resize-none overflow-hidden rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500 disabled:opacity-50"
+            className="flex-1 resize-none overflow-hidden rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
           />
           <button
             type="submit"

@@ -2,24 +2,50 @@ import { useState, useEffect, useRef } from "react";
 
 interface CardGeneratingIndicatorProps {
   active: boolean;
+  variant?: "card" | "image";
 }
 
-const MESSAGES = [
-  "Analyzing your strengths profile...",
-  "Determining your archetype...",
-  "Distilling top abilities...",
-  "Crafting flavor text...",
-  "Rendering card layout...",
-  "Applying holographic finish...",
-];
+const VARIANTS = {
+  card: {
+    label: "Card Forge",
+    procTag: "gen.proc",
+    durationMs: 12000,
+    progressTarget: 88,
+    finishMsg: "Card generated \u2713",
+    messages: [
+      "Analyzing your strengths profile...",
+      "Determining your archetype...",
+      "Distilling top abilities...",
+      "Crafting flavor text...",
+      "Rendering card layout...",
+      "Applying holographic finish...",
+    ],
+  },
+  image: {
+    label: "Portrait Forge",
+    procTag: "img.gen",
+    // Image generation is slow (~30-60s) — pace the bar accordingly
+    durationMs: 50000,
+    progressTarget: 92,
+    finishMsg: "Portrait rendered \u2713",
+    messages: [
+      "Booting image diffusion stack...",
+      "Composing card frame & metallic bezels...",
+      "Painting subject portrait...",
+      "Lighting the scene...",
+      "Engraving panel typography...",
+      "Polishing holographic accents...",
+      "Final pass — sharpening details...",
+    ],
+  },
+} as const;
 
-const PROGRESS_DURATION_MS = 12000;
-const PROGRESS_TARGET = 88;
 const FADE_OUT_DELAY_MS = 600;
 
-export function CardGeneratingIndicator({ active }: CardGeneratingIndicatorProps) {
+export function CardGeneratingIndicator({ active, variant = "card" }: CardGeneratingIndicatorProps) {
+  const cfg = VARIANTS[variant];
   const [progress, setProgress] = useState(0);
-  const [message, setMessage] = useState(MESSAGES[0]);
+  const [message, setMessage] = useState<string>(cfg.messages[0]);
   const [finishing, setFinishing] = useState(false);
   const [prevActive, setPrevActive] = useState(false);
   const rafRef = useRef<number | null>(null);
@@ -30,11 +56,11 @@ export function CardGeneratingIndicator({ active }: CardGeneratingIndicatorProps
     if (active) {
       setProgress(0);
       setFinishing(false);
-      setMessage(MESSAGES[0]);
+      setMessage(cfg.messages[0]);
     } else if (prevActive) {
       setProgress(100);
       setFinishing(true);
-      setMessage("Card generated \u2713");
+      setMessage(cfg.finishMsg);
     }
   }
 
@@ -45,9 +71,9 @@ export function CardGeneratingIndicator({ active }: CardGeneratingIndicatorProps
     const start = performance.now();
     const tick = () => {
       const elapsed = performance.now() - start;
-      const t = Math.min(elapsed / PROGRESS_DURATION_MS, 1);
+      const t = Math.min(elapsed / cfg.durationMs, 1);
       const eased = 1 - Math.pow(1 - t, 3);
-      setProgress(Math.round(eased * PROGRESS_TARGET));
+      setProgress(Math.round(eased * cfg.progressTarget));
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tick);
       }
@@ -56,16 +82,16 @@ export function CardGeneratingIndicator({ active }: CardGeneratingIndicatorProps
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [active]);
+  }, [active, cfg.durationMs, cfg.progressTarget]);
 
   useEffect(() => {
     if (!active || finishing) return;
     const iv = setInterval(() => {
-      messageIdxRef.current = (messageIdxRef.current + 1) % MESSAGES.length;
-      setMessage(MESSAGES[messageIdxRef.current]);
+      messageIdxRef.current = (messageIdxRef.current + 1) % cfg.messages.length;
+      setMessage(cfg.messages[messageIdxRef.current]);
     }, 2000);
     return () => clearInterval(iv);
-  }, [active, finishing]);
+  }, [active, finishing, cfg.messages]);
 
   useEffect(() => {
     if (!finishing) return;
@@ -92,9 +118,9 @@ export function CardGeneratingIndicator({ active }: CardGeneratingIndicatorProps
         <div className="flex items-center gap-2 border-b border-violet-900/50 bg-black/60 px-3 py-1.5">
           <span className="inline-block h-2 w-2 rounded-full bg-violet-400 compaction-pulse" />
           <span className="text-violet-300 tracking-wider text-[10px] uppercase font-bold">
-            Card Forge
+            {cfg.label}
           </span>
-          <span className="ml-auto text-violet-800 text-[10px]">gen.proc</span>
+          <span className="ml-auto text-violet-800 text-[10px]">{cfg.procTag}</span>
         </div>
 
         <div className="px-3 py-2.5 space-y-2">

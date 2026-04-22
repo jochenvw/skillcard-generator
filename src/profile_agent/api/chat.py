@@ -25,6 +25,7 @@ router = APIRouter(tags=["chat"])
 class IdentityContext(BaseModel):
     name: str = ""
     role: str = ""
+    title: str = ""
     photoStatus: str = "unknown"
 
 
@@ -80,6 +81,7 @@ async def chat(
     identity = SvcIdentity(
         name=body.identity.name,
         role=body.identity.role,
+        title=body.identity.title,
         photo_status=body.identity.photoStatus,
     )
     completed = [

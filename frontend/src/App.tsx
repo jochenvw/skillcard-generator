@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from "react";
+import { useRef, useCallback, useState, useEffect } from "react";
 import type { UIMessage } from "ai";
 import { useLocalSession } from "./hooks/useLocalSession";
 import { useAuth } from "./auth";
@@ -63,6 +63,96 @@ export default function App() {
 
   // Track whether the next send should include hasImage
   const hasImageRef = useRef(false);
+
+  // ── /demo route — fetch a pre-baked persona + generated card image ──────
+  const demoFetchedRef = useRef(false);
+  useEffect(() => {
+    if (demoFetchedRef.current) return;
+    if (typeof window === "undefined") return;
+    if (window.location.pathname !== "/demo") return;
+    demoFetchedRef.current = true;
+
+    (async () => {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        Object.assign(headers, await getAuthHeaders());
+
+        // 1) Fetch card data immediately so the SkillCard renders.
+        const res = await fetch("/api/demo", { method: "POST", headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = (await res.json()) as { cardData: CardData };
+        setCardData(body.cardData);
+
+        // 2) Kick off the slow image generation. The image-loader in
+        // ChatPanel becomes visible as soon as cardData is set & no image yet.
+        const imgRes = await fetch("/api/demo/image", { method: "POST", headers });
+        if (!imgRes.ok) throw new Error(`Image HTTP ${imgRes.status}`);
+        const imgBody = (await imgRes.json()) as {
+          cardImage: { url?: string; base64?: string } | null;
+        };
+        if (imgBody.cardImage?.url) {
+          setCardImageSrc(imgBody.cardImage.url);
+        } else if (imgBody.cardImage?.base64) {
+          setCardImageSrc(`data:image/png;base64,${imgBody.cardImage.base64}`);
+        }
+      } catch (err) {
+        console.error("Demo card load failed:", err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Regenerate card from existing session state (no interview re-run) ─────
+  const [regenerating, setRegenerating] = useState(false);
+  const regenerateCard = useCallback(async () => {
+    if (!session || regenerating) return;
+    if (!session.completedStages?.length) {
+      console.warn("Regenerate: no completed stages in session");
+      return;
+    }
+    setRegenerating(true);
+    setCardImageSrc(null);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      Object.assign(headers, await getAuthHeaders());
+      const payload = {
+        identity: session.identity,
+        completedStageSummaries: session.completedStages.map((s) => ({
+          id: s.id,
+          summary: s.summary,
+        })),
+        cliftonStrengths: session.cliftonStrengths || [],
+        photoBase64: session.photoBase64,
+        includeImage: true,
+      };
+      const res = await fetch("/api/regenerate", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as {
+        cardData: CardData;
+        cardImage?: { url?: string; base64?: string } | null;
+      };
+      setCardData(body.cardData);
+      updateSession({ cardData: body.cardData });
+      if (body.cardImage?.url) {
+        setCardImageSrc(body.cardImage.url);
+      } else if (body.cardImage?.base64) {
+        setCardImageSrc(`data:image/png;base64,${body.cardImage.base64}`);
+      }
+    } catch (err) {
+      console.error("Regenerate failed:", err);
+    } finally {
+      setRegenerating(false);
+    }
+  }, [session, regenerating, getAuthHeaders, updateSession]);
+
+  // Expose for quick manual triggering from devtools.
+  useEffect(() => {
+    (window as unknown as { regenerateCard?: () => void }).regenerateCard = regenerateCard;
+  }, [regenerateCard]);
 
   // ── Send a chat message via the stateless endpoint ──────────────────────
   const sendMessage = useCallback(
@@ -377,7 +467,16 @@ export default function App() {
     <div className="flex h-full bg-zinc-950 text-zinc-200 bg-grid-pattern">
       {/* Left panel — Progress */}
       <aside className="w-64 shrink-0 border-r border-zinc-800 p-4 overflow-hidden hidden lg:block">
-        <ProgressPanel data={session.panelData} />
+        <ProgressPanel
+          data={session.panelData}
+          totalTurns={
+            session.completedStages.reduce(
+              (sum, s) => sum + Math.ceil((s.turnCount ?? 0) / 2),
+              0,
+            ) +
+            session.currentStageMessages.filter((m) => m.role === "user").length
+          }
+        />
       </aside>
 
       {/* Centre panel — Chat */}
@@ -474,6 +573,8 @@ export default function App() {
           onPdfProcessingStart={handlePdfProcessingStart}
           onPdfStrengths={handlePdfStrengths}
           onPdfError={handlePdfError}
+          onRegenerateCard={regenerateCard}
+          regenerating={regenerating}
         />
       </main>
 

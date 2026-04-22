@@ -3,10 +3,18 @@ You are an expert at distilling interview transcripts into a structured personal
 ## Profile Source Material
 
 **Name:** $display_name
+**Stated title (use verbatim if present, else infer from evidence):** $display_title
 **Archetype hint (flavor only, do NOT output):** $archetype
 **Top Strengths (raw):** $top_strengths
 
-## Skill Matrix (raw)
+## Stage-by-Stage Evidence (PRIMARY SOURCE)
+
+The interview was structured into stages. Each stage's summary below is your
+**main source of truth** for filling in the card. Quote and paraphrase from it.
+
+$stage_evidence
+
+## Skill Matrix (technical scoring, secondary)
 $skill_matrix
 
 ## Evidence Highlights
@@ -22,14 +30,14 @@ Extract content from the evidence above into the **SkillCardProfile** JSON shape
 ### Field mapping (from the interview stages)
 
 - `name` ← from identity / introduction
-- `title` ← from current role / introduction
+- `title` ← **Stated title above if non-empty**; otherwise infer from current role / introduction
 - `industry` ← inferred from role and projects discussed (fallback: `"Technology"`)
-- `strengths` ← from collaboration style + accomplishments + signature traits
+- `strengths` ← from `[collaboration]`, `[shower_thoughts]`, signature traits across stages
 - `clifton_strengths` ← from the CliftonStrengths section above (verbatim items); empty list if none provided
-- `inspirations` ← from heroes + influences (people *and* ideas)
-- `aspirations` ← from the aspirations stage
-- `learn_grow` ← from shower_thoughts + hobby_projects (curiosities + things they're actively learning)
-- `accomplishments` ← from proud_projects
+- `inspirations` ← from `[heroes]` (people) AND `[influences]` (books, talks, ideas, quotes). **Both stages must contribute** if they have content.
+- `aspirations` ← from `[aspirations]`
+- `learn_grow` ← from `[shower_thoughts]` + `[hobby_projects]` (curiosities + things they're actively learning)
+- `accomplishments` ← from `[proud_projects]`
 - `growth_focus` ← **1 sharp sentence** synthesized from `learn_grow`
 - `flavor_text` ← **≤ 15 words**, mythic tone, derived from `inspirations` + `aspirations`
 

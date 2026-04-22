@@ -118,7 +118,7 @@ function XpCounter({ turns, completed, total }: { turns: number; completed: numb
 /*  Main panel                                                       */
 /* ------------------------------------------------------------------ */
 
-export function ProgressPanel({ data }: { data: PanelData | null }) {
+export function ProgressPanel({ data, totalTurns }: { data: PanelData | null; totalTurns?: number }) {
   if (!data) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-500 text-sm font-mono animate-pulse">
@@ -129,7 +129,9 @@ export function ProgressPanel({ data }: { data: PanelData | null }) {
 
   const completedCount = data.completedStageIds.length;
   const totalCount = data.stages.length;
-  const totalTurns = data.stages.reduce((sum: number, s: StageInfo) => sum + s.turns, 0);
+  const turns =
+    totalTurns ??
+    data.stages.reduce((sum: number, s: StageInfo) => sum + (s.turns ?? 0), 0);
 
   return (
     <div className="flex flex-col h-full">
@@ -149,7 +151,7 @@ export function ProgressPanel({ data }: { data: PanelData | null }) {
         ))}
       </div>
 
-      <XpCounter turns={totalTurns} completed={completedCount} total={totalCount} />
+      <XpCounter turns={turns} completed={completedCount} total={totalCount} />
     </div>
   );
 }

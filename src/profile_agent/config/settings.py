@@ -51,18 +51,6 @@ class Settings(BaseSettings):
     azure_openai_deployment: str = ""
     azure_openai_api_version: str = "2025-04-01-preview"
 
-    # Azure Storage
-    azure_storage_account_url: str = ""
-    blob_container_uploads: str = "uploads"
-    blob_container_cards: str = "cards"
-
-    # Cosmos DB
-    cosmos_endpoint: str = ""
-    cosmos_database_name: str = "profileagent"
-
-    # Key Vault
-    key_vault_url: str = ""
-
     # Application Insights
     appinsights_connection_string: str = ""
 
@@ -77,7 +65,6 @@ class Settings(BaseSettings):
 
     # Local dev flags
     dev_auth_bypass: bool = False
-    dev_mock_blob: bool = False
 
     # Server
     host: str = "0.0.0.0"
@@ -91,10 +78,6 @@ class Settings(BaseSettings):
     @property
     def is_prod(self) -> bool:
         return self.environment == Environment.PROD
-
-    @property
-    def entra_authority(self) -> str:
-        return f"https://login.microsoftonline.com/{self.entra_tenant_id}"
 
     @property
     def effective_azure_openai_endpoint(self) -> str:
