@@ -16,7 +16,10 @@ from functools import lru_cache
 
 from openai import AsyncAzureOpenAI
 
+from pydantic import ValidationError
+
 from profile_agent.config.settings import Settings, get_settings
+from profile_agent.models.skill_card_profile import SkillCardProfile
 from profile_agent.prompts import render_template
 from profile_agent.stages.loader import build_stage_index, load_stages
 from profile_agent.stages.models import StageDefinition
@@ -360,6 +363,7 @@ async def _run_card_generation(
     synthesis_json: str,
     display_name: str,
     photo_status: str,
+    clifton_strengths: list[str] | None = None,
 ) -> dict:
     archetype = "Technologist"
     top_strengths = "[]"
@@ -379,6 +383,9 @@ async def _run_card_generation(
     else:
         logger.warning("Could not parse synthesis JSON for card generation")
 
+    clifton_list = [s for s in (clifton_strengths or []) if isinstance(s, str) and s.strip()]
+    clifton_block = "\n".join(f"• {s.strip()}" for s in clifton_list) if clifton_list else ""
+
     card_prompt = render_template(
         "card_generation",
         display_name=display_name,
@@ -386,6 +393,7 @@ async def _run_card_generation(
         top_strengths=top_strengths,
         skill_matrix=skill_matrix,
         evidence_highlights=evidence_highlights or "No highlights available.",
+        clifton_strengths=clifton_block,
     )
     card_response = await client.chat.completions.create(
         model=settings.effective_azure_openai_deployment,
@@ -399,40 +407,38 @@ async def _run_card_generation(
     card_text = card_response.choices[0].message.content or ""
 
     card_data = _extract_json(card_text)
-    if not card_data:
-        logger.warning("Could not parse card spec JSON, using defaults")
-        card_data = {
-            "display_name": display_name,
-            "card_title": "Skill Deck",
-            "level": 5,
-            "xp": 3000,
-            "xp_to_next_level": 2000,
-            "rarity": "common",
-            "archetype": "Technologist",
-            "top_stats": [
-                {"id": "technology", "label": "Technology", "value": 7, "icon": "code"},
-                {"id": "architecture", "label": "Architecture", "value": 6, "icon": "brain"},
-                {"id": "leadership", "label": "Leadership", "value": 5, "icon": "users"},
-                {"id": "systems", "label": "Systems", "value": 5, "icon": "cog"},
-            ],
-            "strengths": ["Technical problem solving", "System-level thinking", "Continuous learning"],
-            "weaknesses": ["Breadth over depth", "Delegation skills"],
-            "signature_ability": {"name": "Adaptive Architect", "description": "Shapes systems to match evolving constraints."},
-            "growth_focus": "Expanding horizons",
-            "flavor_text": "Every system tells a story.",
-        }
+    if card_data is None:
+        logger.warning("Could not parse SkillCardProfile JSON; using fallback")
+        card_data = {}
 
-    card_data["display_name"] = display_name
-    card_data["photo_url"] = None
-    # Ensure new fields have defaults for backward compat
-    card_data.setdefault("rarity", "rare")
-    card_data.setdefault("archetype", "Technologist")
-    card_data.setdefault("top_stats", [])
-    card_data.setdefault("strengths", [])
-    card_data.setdefault("weaknesses", [])
-    card_data.setdefault("signature_ability", None)
-    card_data.setdefault("growth_focus", card_data.get("grow_into", ""))
-    return card_data
+    if not card_data.get("name"):
+        card_data["name"] = display_name
+    if clifton_list and not card_data.get("clifton_strengths"):
+        card_data["clifton_strengths"] = clifton_list
+
+    try:
+        profile = SkillCardProfile.model_validate(card_data)
+    except ValidationError as ve:
+        logger.warning("SkillCardProfile validation failed: %s", ve.errors())
+        profile = SkillCardProfile(
+            name=display_name or "Anonymous",
+            title=str(card_data.get("title") or ""),
+            industry=str(card_data.get("industry") or "Technology"),
+            strengths=card_data.get("strengths") or ["—"],
+            clifton_strengths=clifton_list,
+            inspirations=card_data.get("inspirations") or [],
+            aspirations=card_data.get("aspirations") or ["—"],
+            learn_grow=card_data.get("learn_grow") or ["—"],
+            accomplishments=card_data.get("accomplishments") or [],
+            growth_focus=str(card_data.get("growth_focus") or ""),
+            flavor_text=str(card_data.get("flavor_text") or ""),
+        )
+
+    result = profile.model_dump()
+    # Photo metadata travels alongside the profile but is not part of the schema
+    result["photo_url"] = None
+    result["photo_status"] = photo_status
+    return result
 
 
 _image_client: AsyncAzureOpenAI | None = None
@@ -469,72 +475,72 @@ async def _get_image_client(settings: Settings) -> AsyncAzureOpenAI:
     return _image_client
 
 
+def format_bullets(items: list[str]) -> str:
+    if not items:
+        return "• —"
+    return "\n".join(f"• {item.strip()}" for item in items[:5])
+
+
 async def _generate_card_image(client, settings: Settings, card_data: dict, photo_base64: str | None = None) -> dict | None:
     """Generate a full trading card image using gpt-image-1.5. Uses images.edit if photo provided."""
     import base64 as b64mod
     import io
 
-    display_name = card_data.get("display_name", "Unknown")
-    archetype = card_data.get("archetype", "Technologist")
-    rarity = card_data.get("rarity", "rare")
-    level = card_data.get("level", 7)
-    xp = card_data.get("xp", 5000)
-    signature = card_data.get("signature_ability", {})
-    ability_name = signature.get("name", "Core Skill") if signature else "Core Skill"
-    ability_desc = signature.get("description", "") if signature else ""
-    stats = card_data.get("top_stats", [])
-    strengths = card_data.get("strengths", [])
-    weaknesses = card_data.get("weaknesses", [])
-    growth = card_data.get("growth_focus", "")
-    flavor = card_data.get("flavor_text", "")
-
-    stats_text = "\n".join(f"- {s.get('label','?')}: {s.get('value',5)}/10" for s in stats[:4])
-    strengths_text = ", ".join(strengths[:3]) if strengths else "Technical excellence"
-    weaknesses_text = ", ".join(weaknesses[:2]) if weaknesses else "Growth areas"
-
-    rarity_style = {
-        "common": "neutral steel tones, muted lighting, simple metallic frame",
-        "rare": "blue glowing accents, cool blue light strips, blue metallic frame",
-        "epic": "purple glowing accents, purple energy effects, purple/violet metallic frame",
-        "legendary": "golden glowing accents, god-ray lighting, ornate gold metallic frame with gems",
-    }.get(rarity, "blue glowing accents")
+    name = card_data.get("name") or card_data.get("display_name") or "Unknown"
+    title = card_data.get("title") or ""
+    industry = card_data.get("industry") or "Technology"
+    strengths = card_data.get("strengths") or []
+    clifton_strengths = card_data.get("clifton_strengths") or []
+    inspirations = card_data.get("inspirations") or []
+    aspirations = card_data.get("aspirations") or []
+    learn_grow = card_data.get("learn_grow") or []
+    accomplishments = card_data.get("accomplishments") or []
+    growth_focus = card_data.get("growth_focus") or ""
+    flavor_text = card_data.get("flavor_text") or ""
 
     prompt = f"""A premium, high-end digital trading card for a futuristic skill-based game. Full card layout, vertical orientation.
 
 Design:
 - metallic sci-fi frame with beveled edges
 - layered UI panels with depth and shadows
-- {rarity_style}
+- blue and cyan glowing accents
 - polished, sharp, AAA game UI quality
 - high contrast, crisp edges, no blur
 
 Top section:
 - bold header bar reading "SKILL DECK"
-- level badge on the left: "LVL {level}"
-- XP badge on the right: "XP {xp:,}"
-- name plate below reading "{display_name}" with subtitle "{archetype}"
+- name plate reading "{name}" with subtitle "{title} · {industry}"
 
 Portrait:
 - centered character portrait inside a framed window
-- the person is a confident {archetype.lower()}, professional tech leader appearance
+- the person is a confident professional, {title} appearance
 - background: blurred tech dashboards, code, holographic graphs
 - cinematic lighting, rim light, sharp focus
 
-Middle section:
-- "CORE STATS" panel with stat bars:
-{stats_text}
-- each stat has a distinct icon and filled progress bar
+Lower sections (six panels in a 2-column grid, consistent spacing, grid-aligned):
+- left panel titled "STRENGTHS" (blue-themed):
+{format_bullets(strengths)}
 
-Lower sections:
-- left panel titled "GROWTH AREAS" (red-themed): {weaknesses_text}
-- right panel titled "SIGNATURE: {ability_name}" (green/gold-themed): {ability_desc}
-- clean separation between panels
+- right panel titled "CLIFTON STRENGTHS" (purple-themed):
+{format_bullets(clifton_strengths)}
+
+- next row left panel titled "INSPIRATIONS":
+{format_bullets(inspirations)}
+
+- next row right panel titled "ASPIRATIONS":
+{format_bullets(aspirations)}
+
+- next row left panel titled "LEARN / GROW":
+{format_bullets(learn_grow)}
+
+- next row right panel titled "ACCOMPLISHMENTS":
+{format_bullets(accomplishments)}
+
+- clean separation between all panels, grid-aligned, consistent spacing
 
 Bottom section:
-- growth focus: "{growth}"
-- flavor text: "{flavor}"
-- horizontal XP progress bar with glow
-- rarity stamp: "{rarity.upper()}"
+- growth focus tagline: "{growth_focus}"
+- flavor text quote: "{flavor_text}"
 
 Style: clean structured UI, resembles a collectible card game interface, precise alignment, symmetrical layout, subtle gradients and metallic textures.
 Quality: ultra detailed, sharp legible typography, no distortions, consistent spacing."""
@@ -678,6 +684,7 @@ async def process_stateless_turn(
     has_image: bool = False,
     photo_base64: str | None = None,
     settings: Settings | None = None,
+    clifton_strengths: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Process a user turn statelessly and yield AI SDK SSE events.
 
@@ -910,9 +917,16 @@ async def process_stateless_turn(
 
             yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": "Generating your Skill Deck card...\\n\\n"})}\n\n'
             display_name = identity.name or "Anonymous"
-            card_data_result = await _run_card_generation(client, settings, synthesis_json, display_name, identity.photo_status)
+            card_data_result = await _run_card_generation(
+                client,
+                settings,
+                synthesis_json,
+                display_name,
+                identity.photo_status,
+                clifton_strengths=clifton_strengths,
+            )
 
-            status_msg = f"Your **{card_data_result.get('display_name', 'Skill')} Deck** card is ready! Check it out below."
+            status_msg = f"Your **{card_data_result.get('name', 'Skill')} Deck** card is ready! Check it out below."
             yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": status_msg})}\n\n'
             yield f'data: {json.dumps({"type": "text-end", "id": text_id})}\n\n'
 

@@ -5,6 +5,8 @@ import { SkillCard } from "./SkillCard";
 import { WelcomeBanner } from "./WelcomeBanner";
 import { CompactionIndicator } from "./CompactionIndicator";
 import { CardGeneratingIndicator } from "./CardGeneratingIndicator";
+import { extractPdfText } from "../utils/pdfExtract";
+import { extractStrengths, type StrengthsResponse } from "../utils/strengthsClient";
 
 interface SlashCommand {
   command: string;
@@ -31,6 +33,10 @@ interface ChatPanelProps {
   cardImageSrc?: string | null;
   cardData?: CardData | null;
   photoBase64?: string | null;
+  getAuthHeaders?: () => Promise<HeadersInit>;
+  onPdfProcessingStart?: (filename: string) => void;
+  onPdfStrengths?: (resp: StrengthsResponse) => void;
+  onPdfError?: (msg: string) => void;
 }
 
 function getMessageText(message: UIMessage): string {
@@ -50,14 +56,21 @@ export function ChatPanel({
   cardImageSrc,
   cardData,
   photoBase64,
+  getAuthHeaders,
+  onPdfProcessingStart,
+  onPdfStrengths,
+  onPdfError,
 }: ChatPanelProps) {
   const [input, setInputRaw] = useState("");
   const [pendingImage, setPendingImage] = useState<File | null>(null);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
+  const [pdfProcessing, setPdfProcessing] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   // Wrap setInput to reset slash menu state on every input change
   const setInput = useCallback((value: string) => {
@@ -134,6 +147,47 @@ export function ChatPanel({
 
     e.target.value = "";
   }, [onPhotoSelected]);
+
+  const handlePdfSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      alert("Please select a PDF file.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert("PDF must be under 10 MB.");
+      return;
+    }
+    if (!getAuthHeaders) {
+      alert("Authentication is not available.");
+      return;
+    }
+
+    setPdfProcessing(true);
+    setPdfError(null);
+    onPdfProcessingStart?.(file.name);
+
+    try {
+      const text = await extractPdfText(file);
+      if (!text) {
+        throw new Error("No selectable text found in PDF.");
+      }
+      console.info("[pdf] extracted text length:", text.length);
+      const authHeaders = await getAuthHeaders();
+      const response = await extractStrengths(text, authHeaders);
+      console.info("[pdf] strengths extracted:", response.strengths.length);
+      onPdfStrengths?.(response);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to process PDF.";
+      console.error("[pdf] processing failed:", msg);
+      setPdfError(msg);
+      onPdfError?.(msg);
+    } finally {
+      setPdfProcessing(false);
+    }
+  }, [getAuthHeaders, onPdfProcessingStart, onPdfStrengths, onPdfError]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Navigate slash command menu
@@ -212,25 +266,26 @@ export function ChatPanel({
           })()}
         />
 
-        {cardData && (
-          <div className="flex justify-center py-4">
-            <SkillCard data={cardData} photoBase64={photoBase64} />
-          </div>
-        )}
-
-        {cardImageSrc && (
-          <div className="flex justify-center py-4">
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-[420px] rounded-2xl overflow-hidden border-2 border-violet-500/30 shadow-lg shadow-violet-500/10 skillcard-frame rarity-epic">
-                <img
-                  src={cardImageSrc}
-                  alt="AI-generated card portrait"
-                  className="w-full"
-                />
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">
-                ✨ AI-Generated Portrait
-              </span>
+        {(cardData || cardImageSrc) && (
+          <div className="py-4">
+            <div className="flex flex-col md:flex-row flex-wrap items-center md:items-start justify-center gap-6">
+              {cardData && (
+                <SkillCard data={cardData} photoBase64={photoBase64} />
+              )}
+              {cardImageSrc && (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-[420px] rounded-2xl overflow-hidden border-2 border-violet-500/30 shadow-lg shadow-violet-500/10 skillcard-frame rarity-epic">
+                    <img
+                      src={cardImageSrc}
+                      alt="AI-generated card portrait"
+                      className="w-full"
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">
+                    ✨ AI-Generated Portrait
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -247,6 +302,16 @@ export function ChatPanel({
 
       {/* Input */}
       <div className="border-t border-zinc-800 p-4">
+        {pdfError && (
+          <div className="mb-2 rounded-lg bg-red-950/40 border border-red-900/50 px-3 py-2 text-xs text-red-300">
+            {pdfError}
+          </div>
+        )}
+        {pdfProcessing && (
+          <div className="mb-2 rounded-lg bg-zinc-800 px-3 py-2 text-xs text-cyan-400/80 font-mono">
+            <span className="terminal-cursor">▌</span> Analyzing PDF…
+          </div>
+        )}
         {pendingImage && (
           <div className="mb-2 flex items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-300">
             <span className="truncate max-w-[200px]">{pendingImage.name}</span>
@@ -304,15 +369,36 @@ export function ChatPanel({
             onChange={handleFileSelect}
             className="hidden"
           />
+          <input
+            ref={pdfInputRef}
+            type="file"
+            accept="application/pdf"
+            onChange={handlePdfSelect}
+            className="hidden"
+          />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading}
+            disabled={isLoading || pdfProcessing}
             className="shrink-0 rounded-xl bg-zinc-800 border border-zinc-700 p-2.5 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 disabled:opacity-40 transition-colors"
             title="Upload profile photo"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => pdfInputRef.current?.click()}
+            disabled={isLoading || pdfProcessing}
+            className="shrink-0 rounded-xl bg-zinc-800 border border-zinc-700 p-2.5 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 disabled:opacity-40 transition-colors"
+            title="Upload CliftonStrengths PDF"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="9" y1="13" x2="15" y2="13" />
+              <line x1="9" y1="17" x2="15" y2="17" />
             </svg>
           </button>
           <textarea
@@ -322,12 +408,12 @@ export function ChatPanel({
             onKeyDown={handleKeyDown}
             placeholder="Type a message or / for commands…"
             rows={1}
-            disabled={isLoading}
+            disabled={isLoading || pdfProcessing}
             className="flex-1 resize-none overflow-hidden rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500 disabled:opacity-50"
           />
           <button
             type="submit"
-            disabled={isLoading || (!input.trim() && !pendingImage)}
+            disabled={isLoading || pdfProcessing || (!input.trim() && !pendingImage)}
             className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-40 disabled:hover:bg-violet-600 transition-colors"
           >
             Send

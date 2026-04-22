@@ -11,6 +11,7 @@ function createFreshSession(): ClientSession {
     currentStageMessages: [],
     identity: { name: null, role: null, photoStatus: 'unknown' },
     photoBase64: null,
+    cliftonStrengths: [],
     panelData: {
       stages: [],
       currentStageId: 'introduction',
@@ -31,7 +32,12 @@ export function useLocalSession() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       try {
-        return JSON.parse(raw) as ClientSession;
+        const parsed = JSON.parse(raw) as ClientSession;
+        // Backfill fields added in later versions
+        if (!Array.isArray(parsed.cliftonStrengths)) {
+          parsed.cliftonStrengths = [];
+        }
+        return parsed;
       } catch {
         const fresh = createFreshSession();
         persist(fresh);

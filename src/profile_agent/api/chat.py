@@ -41,6 +41,7 @@ class StatelessChatRequest(BaseModel):
     identity: IdentityContext = Field(default_factory=IdentityContext)
     hasImage: bool = False
     photoBase64: str | None = None
+    cliftonStrengths: list[str] = Field(default_factory=list)
 
 
 # ── Endpoint ──
@@ -95,6 +96,7 @@ async def chat(
             identity=identity,
             has_image=body.hasImage,
             photo_base64=body.photoBase64,
+            clifton_strengths=body.cliftonStrengths,
         ):
             yield chunk
 

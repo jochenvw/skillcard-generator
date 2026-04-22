@@ -1,82 +1,87 @@
-You are an expert at transforming interview transcripts into structured collectible trading card data. Your output must feel like a premium game artifact — precise, system-driven, and slightly mythic.
+You are an expert at distilling interview transcripts into a structured personal **Skill Card Profile**. Your output must be precise, grounded in evidence, and feel slightly mythic in tone — but it is a *profile*, not a game stat block.
 
-## Profile Data
+## Profile Source Material
 
 **Name:** $display_name
-**Archetype:** $archetype
-**Top Strengths:** $top_strengths
+**Archetype hint (flavor only, do NOT output):** $archetype
+**Top Strengths (raw):** $top_strengths
 
-## Skill Matrix
+## Skill Matrix (raw)
 $skill_matrix
 
 ## Evidence Highlights
 $evidence_highlights
 
+## CliftonStrengths (if any, may be empty)
+$clifton_strengths
+
 ## Instructions
 
-Transform the evidence into a Skill Deck trading card. Every field must be grounded in what the person actually said. Be concise and technically grounded.
+Extract content from the evidence above into the **SkillCardProfile** JSON shape below. Every field must be grounded in what the person actually said.
 
-### Required Fields
+### Field mapping (from the interview stages)
 
-1. **top_stats** — The 4 most prominent skill dimensions. Each gets:
-   - `id`: snake_case identifier (e.g. "distributed_systems")
-   - `label`: 1–3 word display name
-   - `value`: 1–10 (based on evidence depth/breadth)
-   - `icon`: one of: "cog", "brain", "shield", "cloud", "code", "chart", "users", "lightning", "database", "globe"
+- `name` ← from identity / introduction
+- `title` ← from current role / introduction
+- `industry` ← inferred from role and projects discussed (fallback: `"Technology"`)
+- `strengths` ← from collaboration style + accomplishments + signature traits
+- `clifton_strengths` ← from the CliftonStrengths section above (verbatim items); empty list if none provided
+- `inspirations` ← from heroes + influences (people *and* ideas)
+- `aspirations` ← from the aspirations stage
+- `learn_grow` ← from shower_thoughts + hobby_projects (curiosities + things they're actively learning)
+- `accomplishments` ← from proud_projects
+- `growth_focus` ← **1 sharp sentence** synthesized from `learn_grow`
+- `flavor_text` ← **≤ 15 words**, mythic tone, derived from `inspirations` + `aspirations`
 
-2. **strengths** — 3 concrete, specific strengths (not generic). 3–6 words each. Example: "Deep Kubernetes internals knowledge" not "Good with containers".
+### Constraints (hard)
 
-3. **weaknesses** — 2 growth areas or blind spots inferred from the conversation. Honest but constructive. 3–6 words each.
+- Each list: target **3–5 items**, each item **≤ 6 words**, concrete and specific (not generic).
+- `strengths`, `aspirations`, `learn_grow` **MUST be non-empty**. If evidence is thin, infer the best honest item rather than leaving empty.
+- `clifton_strengths`, `inspirations`, `accomplishments` may be empty lists if there is genuinely no evidence.
+- Strip filler words. Prefer "Deep Kubernetes internals" over "Knows a lot about Kubernetes".
+- Do **NOT** output any of: `top_stats`, `weaknesses`, `signature_ability`, `archetype`, `rarity`, `level`, `xp`, `xp_to_next_level`, `card_title`, `display_name`. These fields are dropped from the schema.
 
-4. **signature_ability** — One standout ability that defines this person:
-   - `name`: 2–4 words, memorable and precise. Good: "Distributed Sensemaking", "Constraint Mapper", "Architectural Compression". Bad: "Team Player", "System Architect".
-   - `description`: 1 sentence explaining the ability in a game-like tone.
+### Response Format
 
-5. **growth_focus** — A single phrase describing where they're headed. 3–6 words.
+Return **ONLY** the JSON object below. No markdown wrapping, no commentary, no code fences.
 
-6. **archetype** — A 1–3 word class/archetype (e.g. "Platform Alchemist", "Systems Cartographer", "Infrastructure Sentinel"). Must be evocative, not generic.
-
-7. **rarity** — One of: "common", "rare", "epic", "legendary". Based on evidence depth:
-   - common: surface-level or few data points
-   - rare: solid evidence across multiple areas
-   - epic: deep expertise with strong narrative
-   - legendary: exceptional breadth and depth with unique perspective
-
-8. **level** — 1–10 reflecting overall experience depth.
-
-9. **xp** / **xp_to_next_level** — Fun XP numbers (hundreds to thousands).
-
-10. **flavor_text** — A pithy 1-sentence quote that captures their philosophy. Written as if inscribed on the card. Max 15 words.
-
-## Response Format (JSON only, no markdown wrapping)
+### Example (filled, illustrative — do NOT copy values)
 
 {
-  "display_name": "$display_name",
-  "card_title": "Skill Deck",
-  "level": 7,
-  "xp": 5120,
-  "xp_to_next_level": 2880,
-  "rarity": "epic",
-  "archetype": "Platform Alchemist",
-  "top_stats": [
-    {"id": "cloud_systems", "label": "Cloud Systems", "value": 9, "icon": "cloud"},
-    {"id": "architecture", "label": "Architecture", "value": 8, "icon": "brain"},
-    {"id": "leadership", "label": "Leadership", "value": 7, "icon": "users"},
-    {"id": "security", "label": "Security", "value": 6, "icon": "shield"}
-  ],
+  "name": "Alex Rivers",
+  "title": "Principal Platform Engineer",
+  "industry": "Cloud Infrastructure",
   "strengths": [
-    "Deep Kubernetes platform expertise",
     "Cross-team architectural influence",
-    "Production incident pattern recognition"
+    "Production incident pattern recognition",
+    "Pragmatic systems decomposition",
+    "Mentoring senior engineers"
   ],
-  "weaknesses": [
-    "Frontend craft underexplored",
-    "Delegation over hands-on bias"
+  "clifton_strengths": [
+    "Strategic",
+    "Learner",
+    "Achiever"
   ],
-  "signature_ability": {
-    "name": "Distributed Sensemaking",
-    "description": "Can untangle complex distributed system failures into clear causal narratives."
-  },
-  "growth_focus": "AI-native platform architecture",
-  "flavor_text": "The system reveals its truth under load."
+  "inspirations": [
+    "Leslie Lamport's clarity",
+    "Jeff Dean's simplicity",
+    "Designing Data-Intensive Applications"
+  ],
+  "aspirations": [
+    "Lead AI-native platform org",
+    "Open-source distributed runtime",
+    "Mentor next-gen architects"
+  ],
+  "learn_grow": [
+    "Rust async internals",
+    "LLM eval methodology",
+    "Mechanism design basics"
+  ],
+  "accomplishments": [
+    "Migrated 200 services to K8s",
+    "Cut p99 latency by 60%",
+    "Founded internal platform guild"
+  ],
+  "growth_focus": "Bridging classical distributed systems with AI-native runtimes.",
+  "flavor_text": "Patterns from yesterday's systems light tomorrow's path."
 }

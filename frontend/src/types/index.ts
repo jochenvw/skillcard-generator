@@ -26,48 +26,23 @@ export interface SessionState {
   turnCount: number;
 }
 
-// --- Card types ---
+// --- Card / profile types ---
 
-export type Rarity = "common" | "rare" | "epic" | "legendary";
-
-export interface CardStat {
-  id: string;
-  label: string;
-  value: number; // 0–10
-  icon?: string;
-}
-
-export interface CardAbility {
+export interface SkillCardProfile {
   name: string;
-  description: string;
-}
-
-export interface CardData {
-  display_name: string;
-  card_title: string;
-  level: number;
-  xp: number;
-  xp_to_next_level: number;
-  rarity: Rarity;
-  archetype: string;
-  flavor_text: string;
-  photo_url: string | null;
-
-  // Stats & abilities
-  top_stats: CardStat[];
+  title: string;
+  industry: string;
   strengths: string[];
-  weaknesses: string[];
-  signature_ability: CardAbility | null;
+  clifton_strengths: string[];
+  inspirations: string[];
+  aspirations: string[];
+  learn_grow: string[];
+  accomplishments: string[];
   growth_focus: string;
-
-  // Legacy fields (kept for backward compat with older sessions)
-  top_expertise?: { label: string; score: number }[];
-  people_i_admire?: string[];
-  technical_accomplishments?: string[];
-  influential_ideas?: string[];
-  strategic_curiosities?: string[];
-  grow_into?: string;
+  flavor_text: string;
 }
+
+export type CardData = SkillCardProfile;
 
 // --- Client-side session model (localStorage) ---
 
@@ -96,6 +71,7 @@ export interface ClientSession {
   currentStageMessages: ChatMessage[];
   identity: Identity;
   photoBase64: string | null;
+  cliftonStrengths: string[];
   panelData: PanelData;
   cardData: CardData | null;
   createdAt: string;

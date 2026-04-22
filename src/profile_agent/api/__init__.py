@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import logging
 
+import mimetypes
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from profile_agent.config.settings import get_settings
+
+# Ensure .mjs is served as JavaScript so browsers will accept it as an ES module
+# (default Python mimetypes returns text/plain, which browsers reject for `import`).
+mimetypes.add_type("text/javascript", ".mjs")
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,10 @@ def create_fastapi_app() -> FastAPI:
     # Stateless streaming chat API (AI SDK Data Stream Protocol)
     from profile_agent.api.chat import router as chat_router
     app.include_router(chat_router, prefix="/api")
+
+    # CliftonStrengths extraction API (stateless)
+    from profile_agent.api.strengths import router as strengths_router
+    app.include_router(strengths_router, prefix="/api")
 
     # Auth config endpoint (public — returns client ID / tenant for SPA)
     from profile_agent.api.auth import router as auth_router

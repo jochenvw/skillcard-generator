@@ -1,12 +1,11 @@
 interface CardPortraitProps {
   displayName: string;
   photoBase64?: string | null;
-  photoUrl?: string | null;
-  archetype: string;
+  subtitle?: string;
 }
 
-export function CardPortrait({ displayName, photoBase64, photoUrl, archetype }: CardPortraitProps) {
-  const src = photoBase64 || photoUrl || undefined;
+export function CardPortrait({ displayName, photoBase64, subtitle }: CardPortraitProps) {
+  const src = photoBase64 || undefined;
   const initial = displayName?.charAt(0)?.toUpperCase() || "?";
 
   return (
@@ -27,12 +26,14 @@ export function CardPortrait({ displayName, photoBase64, photoUrl, archetype }: 
         </div>
       )}
 
-      {/* Archetype badge overlay */}
-      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20">
-        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-white/70 bg-black/50 backdrop-blur-sm px-3 py-1 rounded-full border border-white/10">
-          {archetype}
-        </span>
-      </div>
+      {/* Subtitle badge overlay */}
+      {subtitle && (
+        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 max-w-[90%]">
+          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-white/70 bg-black/50 backdrop-blur-sm px-3 py-1 rounded-full border border-white/10 truncate inline-block max-w-full">
+            {subtitle}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

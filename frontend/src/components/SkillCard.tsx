@@ -1,106 +1,87 @@
 import { useRef, useCallback } from "react";
 import { toPng } from "html-to-image";
-import type { CardData, Rarity, CardStat } from "../types";
+import type { SkillCardProfile } from "../types";
 import { CardFrame } from "./card/CardFrame";
 import { CardPortrait } from "./card/CardPortrait";
-import { CardStats } from "./card/CardStats";
-import { CardAbilities } from "./card/CardAbilities";
-import { CardProgress } from "./card/CardProgress";
-import { CardBadges } from "./card/CardBadges";
+import { CardPanel } from "./card/CardPanel";
 
 interface SkillCardProps {
-  data: CardData;
+  data: SkillCardProfile;
   photoBase64?: string | null;
-}
-
-/** Normalize data from old or new schema into consistent card props. */
-function normalizeStats(data: CardData): CardStat[] {
-  if (data.top_stats?.length) return data.top_stats;
-  // Backward compat: map legacy top_expertise
-  if (data.top_expertise?.length) {
-    return data.top_expertise.map((e, i) => ({
-      id: `stat_${i}`,
-      label: e.label,
-      value: e.score,
-      icon: "cog",
-    }));
-  }
-  return [];
 }
 
 export function SkillCard({ data, photoBase64 }: SkillCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
-  const rarity: Rarity = data.rarity ?? "rare";
-  const archetype = data.archetype ?? data.card_title ?? "Technologist";
-  const stats = normalizeStats(data);
-  const strengths = data.strengths?.length ? data.strengths : [];
-  const weaknesses = data.weaknesses?.length ? data.weaknesses : [];
-  const signatureAbility = data.signature_ability ?? null;
-  const growthFocus = data.growth_focus || data.grow_into || "";
-  const flavorText = data.flavor_text || "";
-  const level = data.level ?? 7;
-  const xp = data.xp ?? 5000;
-  const xpNext = data.xp_to_next_level ?? 2000;
+
+  const subtitleParts = [data.title, data.industry].filter(Boolean);
+  const subtitle = subtitleParts.join(" · ");
 
   const handleExport = useCallback(async () => {
     if (!cardRef.current) return;
     try {
       const dataUrl = await toPng(cardRef.current, { pixelRatio: 2, cacheBust: true });
       const link = document.createElement("a");
-      link.download = `skill-deck-${data.display_name?.replace(/\s+/g, "-").toLowerCase() || "card"}.png`;
+      link.download = `skill-deck-${data.name?.replace(/\s+/g, "-").toLowerCase() || "card"}.png`;
       link.href = dataUrl;
       link.click();
     } catch (err) {
       console.error("Card export failed:", err);
     }
-  }, [data.display_name]);
+  }, [data.name]);
 
   return (
     <div className="flex flex-col items-center gap-2">
       <div ref={cardRef}>
-        <CardFrame rarity={rarity}>
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-gradient-to-r from-slate-800/90 via-slate-700/60 to-slate-800/90 border-b border-slate-600/30">
-        <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">
-          Skill Deck
-        </span>
-        <span className="text-base font-black text-white tracking-wide uppercase">
-          {data.display_name}
-        </span>
-        <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">
-          #{String(level).padStart(2, "0")}
-        </span>
-      </div>
+        <CardFrame>
+          {/* Header bar */}
+          <div className="flex items-center justify-between px-3 py-1.5 bg-gradient-to-r from-slate-800/90 via-slate-700/60 to-slate-800/90 border-b border-slate-600/30">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">
+              Skill Deck
+            </span>
+            <span className="text-base font-black text-white tracking-wide uppercase truncate max-w-[60%] text-center">
+              {data.name}
+            </span>
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">
+              ◆
+            </span>
+          </div>
 
-      <CardPortrait
-        displayName={data.display_name}
-        photoBase64={photoBase64}
-        photoUrl={data.photo_url}
-        archetype={archetype}
-      />
+          <CardPortrait
+            displayName={data.name}
+            photoBase64={photoBase64}
+            subtitle={subtitle}
+          />
 
-      <div className="border-t border-slate-700/30">
-        <CardStats stats={stats} />
-      </div>
+          {/* 6-panel grid */}
+          <div className="border-t border-slate-700/30 px-3 py-2.5 grid grid-cols-2 gap-1.5">
+            <CardPanel title="Strengths" items={data.strengths} accent="blue" />
+            <CardPanel title="Clifton Strengths" items={data.clifton_strengths} accent="purple" />
+            <CardPanel title="Inspirations" items={data.inspirations} />
+            <CardPanel title="Aspirations" items={data.aspirations} />
+            <CardPanel title="Learn / Grow" items={data.learn_grow} />
+            <CardPanel title="Accomplishments" items={data.accomplishments} />
+          </div>
 
-      <div className="border-t border-slate-700/20">
-        <CardAbilities
-          signatureAbility={signatureAbility}
-          strengths={strengths}
-          weaknesses={weaknesses}
-        />
-      </div>
-
-      <div className="border-t border-slate-700/20">
-        <CardBadges
-          rarity={rarity}
-          archetype={archetype}
-          growthFocus={growthFocus}
-          flavorText={flavorText}
-        />
-      </div>
-
-      <CardProgress level={level} xp={xp} xpToNextLevel={xpNext} />
+          {/* Footer */}
+          <div className="border-t border-slate-700/30 px-3 py-2 space-y-1.5 bg-gradient-to-r from-slate-800/60 via-slate-800/40 to-slate-800/60">
+            {data.growth_focus && (
+              <div className="rounded-md bg-slate-800/60 border border-slate-700/30 px-2.5 py-1.5 flex items-center gap-1.5">
+                <span className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500 shrink-0">
+                  Next →
+                </span>
+                <span className="text-[11px] font-bold text-slate-300 truncate">
+                  {data.growth_focus}
+                </span>
+              </div>
+            )}
+            {data.flavor_text && (
+              <div className="text-center px-4 py-1">
+                <p className="text-[10px] italic text-slate-500 leading-snug">
+                  &ldquo;{data.flavor_text}&rdquo;
+                </p>
+              </div>
+            )}
+          </div>
         </CardFrame>
       </div>
 
@@ -119,4 +100,3 @@ export function SkillCard({ data, photoBase64 }: SkillCardProps) {
     </div>
   );
 }
-

@@ -28,7 +28,7 @@ class TestPromptTemplates:
 
     def test_load_card_generation(self):
         template = load_template("card_generation")
-        assert "trading card" in template
+        assert "SkillCardProfile" in template
 
     def test_load_confirmation(self):
         template = load_template("confirmation")

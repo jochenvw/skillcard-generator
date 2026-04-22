@@ -6,6 +6,7 @@ import { ProgressPanel } from "./components/ProgressPanel";
 import { ChatPanel } from "./components/ChatPanel";
 import { SummaryPanel } from "./components/SummaryPanel";
 import type { CardData, StateUpdate, ClientSession } from "./types";
+import type { StrengthsResponse } from "./utils/strengthsClient";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -95,6 +96,7 @@ export default function App() {
         },
         hasImage,
         photoBase64: session.photoBase64 || undefined,
+        clifton_strengths: session.cliftonStrengths || [],
       };
 
       const assistantMsgId = `a-${Date.now()}`;
@@ -259,6 +261,63 @@ export default function App() {
     hasImageRef.current = true;
   }, []);
 
+  // ── PDF strengths handlers ──────────────────────────────────────────────
+  const handlePdfProcessingStart = useCallback((filename: string) => {
+    const ts = Date.now();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `u-pdf-${ts}`,
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: `📄 Uploaded: ${filename}` }],
+      },
+      {
+        id: `a-pdf-${ts}`,
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "text" as const,
+            text: "Analyzing your document for strengths…",
+          },
+        ],
+      },
+    ]);
+  }, []);
+
+  const handlePdfStrengths = useCallback(
+    (resp: StrengthsResponse) => {
+      const names = resp.strengths.map((s) => s.name);
+      updateSession({ cliftonStrengths: names });
+
+      const summary = `Captured ${names.length} Clifton Strengths from your PDF: ${names.join(", ")}.`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-pdf-result-${Date.now()}`,
+          role: "assistant" as const,
+          parts: [{ type: "text" as const, text: summary }],
+        },
+      ]);
+    },
+    [updateSession],
+  );
+
+  const handlePdfError = useCallback((msg: string) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `a-pdf-err-${Date.now()}`,
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "text" as const,
+            text: `Sorry, I couldn't analyze that PDF: ${msg}`,
+          },
+        ],
+      },
+    ]);
+  }, []);
+
   // ── Import session from JSON file ───────────────────────────────────────
   const handleImport = useCallback(() => {
     const input = document.createElement("input");
@@ -273,6 +332,9 @@ export default function App() {
         if (!imported.sessionId || !imported.currentStageId) {
           alert("Invalid session file.");
           return;
+        }
+        if (!Array.isArray(imported.cliftonStrengths)) {
+          imported.cliftonStrengths = [];
         }
         updateSession(imported);
         setMessages(toUIMessages(imported.currentStageMessages));
@@ -408,6 +470,10 @@ export default function App() {
           cardImageSrc={cardImageSrc}
           cardData={cardData}
           photoBase64={session.photoBase64}
+          getAuthHeaders={getAuthHeaders}
+          onPdfProcessingStart={handlePdfProcessingStart}
+          onPdfStrengths={handlePdfStrengths}
+          onPdfError={handlePdfError}
         />
       </main>
 
