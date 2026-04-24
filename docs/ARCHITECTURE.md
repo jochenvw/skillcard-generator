@@ -10,7 +10,7 @@
 │                                ↕                            │
 │  Persistence: SQLite (dev) | Cosmos DB + Blob (prod)        │
 │                                ↕                            │
-│  Azure AI Foundry (GPT models + gpt-image-1.5)             │
+│  Azure AI Foundry (GPT models + gpt-image-2-1)             │
 └─────────────────────────────────────────────────────────────┘
 ```
 

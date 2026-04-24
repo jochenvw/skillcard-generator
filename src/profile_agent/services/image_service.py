@@ -1,6 +1,6 @@
-"""Image service — Azure OpenAI DALL-E integration for card image generation.
+"""Image service — Azure OpenAI image generation for card image generation.
 
-Note: Azure OpenAI DALL-E 3 does not support reference-image input.
+Note: The images.generate endpoint used here does not support reference-image input.
 This adapter accepts uploaded photo metadata but generates based on text
 description only. The interface is designed so a future model with
 reference-image support can be swapped in.
@@ -73,7 +73,7 @@ class ImageService:
                 )
 
         image_data = response.data[0]
-        # gpt-image-1.5 and compatible models return base64 instead of a URL.
+        # gpt-image-2 and compatible models return base64 instead of a URL.
         raw_bytes: bytes | None = None
         if getattr(image_data, "b64_json", None):
             import base64
