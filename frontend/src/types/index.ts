@@ -61,6 +61,7 @@ export interface CompletedStage {
 export interface Identity {
   name: string | null;
   role: string | null;
+  title: string | null;
   photoStatus: 'unknown' | 'uploaded' | 'skipped';
 }
 
