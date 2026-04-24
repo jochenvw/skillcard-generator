@@ -19,6 +19,7 @@ from openai import AsyncAzureOpenAI
 from pydantic import ValidationError
 
 from profile_agent.config.settings import Settings, get_settings
+from profile_agent.models.llm_contracts import CardStyle
 from profile_agent.models.skill_card_profile import SkillCardProfile
 from profile_agent.prompts import render_template
 from profile_agent.stages.loader import build_stage_index, load_stages
@@ -636,11 +637,107 @@ def format_bullets(items: list[str]) -> str:
     return "\n".join(f"• {item.strip()}" for item in items[:5])
 
 
-async def _generate_card_image(client, settings: Settings, card_data: dict, photo_base64: str | None = None) -> dict | None:
-    """Generate a full trading card image using gpt-image-2. Uses images.edit if photo provided."""
-    import base64 as b64mod
-    import io
+# ── Card image prompt builder ──
 
+# Default tokens — used when the user does not customize. These exact strings
+# are what produced the "current look" before the customization feature, so
+# any test that pins the no-style output should compare against them.
+_DEFAULT_DESIGN_LINES = (
+    "- metallic sci-fi frame with beveled edges\n"
+    "- layered UI panels with depth and shadows\n"
+    "- blue and cyan glowing accents\n"
+    "- polished, sharp, AAA game UI quality\n"
+    "- high contrast, crisp edges, no blur"
+)
+_DEFAULT_ACCENT_LINE = "- blue and cyan glowing accents"
+_DEFAULT_STYLE_LINE = (
+    "Style: clean structured UI, resembles a collectible card game interface, "
+    "precise alignment, symmetrical layout, subtle gradients and metallic textures."
+)
+
+# Maps for known presets. Unknown values fall back to defaults (no-op).
+_STYLE_PRESET_DESIGN: dict[str, str] = {
+    "Cyberpunk Neon": (
+        "- glitch-neon frame with chromatic aberration edges\n"
+        "- layered UI panels lit by hot magenta and electric cyan signage\n"
+        "- neon glow accents bleeding into rain-slick reflections\n"
+        "- gritty cyberpunk holo-overlays, scanlines, AAA game UI quality\n"
+        "- high contrast, crisp edges, no blur"
+    ),
+    "Pokémon TCG": (
+        "- glossy holofoil frame in classic trading-card-game proportions\n"
+        "- bold yellow border with energy-type icon corners\n"
+        "- bright primary-color accents and starburst foil shimmer\n"
+        "- clean cartoon-illustration UI, AAA card-game quality\n"
+        "- high contrast, crisp edges, no blur"
+    ),
+    "Fantasy Trading Card": (
+        "- ornate gold-filigree frame with hand-painted parchment panels\n"
+        "- engraved scrollwork dividers and gemstone inlays at corners\n"
+        "- warm amber and emerald glowing accents like enchanted runes\n"
+        "- painterly fantasy-art UI, AAA collectible-card quality\n"
+        "- high contrast, crisp edges, no blur"
+    ),
+    "Vaporwave": (
+        "- pastel chrome frame with retro grid horizon lines\n"
+        "- layered UI panels in soft pink, lavender, and teal\n"
+        "- glowing magenta and cyan sunset-gradient accents\n"
+        "- 80s-anime VHS aesthetic UI, AAA card-game quality\n"
+        "- high contrast, crisp edges, no blur"
+    ),
+}
+
+_STYLE_PRESET_OUTRO: dict[str, str] = {
+    "Cyberpunk Neon": (
+        "Style: gritty cyberpunk UI, neon-drenched holographic overlays, "
+        "precise alignment, symmetrical layout, rain-slick reflective textures."
+    ),
+    "Pokémon TCG": (
+        "Style: classic Pokémon-style trading card UI, holofoil shimmer, "
+        "precise alignment, symmetrical layout, glossy cartoon textures."
+    ),
+    "Fantasy Trading Card": (
+        "Style: high-fantasy collectible card UI, painterly textures, "
+        "precise alignment, symmetrical layout, gold-filigree and parchment finishes."
+    ),
+    "Vaporwave": (
+        "Style: vaporwave/retrofuture UI, pastel chrome and sunset gradients, "
+        "precise alignment, symmetrical layout, soft VHS textures."
+    ),
+}
+
+# A persona "Professional" (or None) keeps the original portrait line intact.
+_PERSONA_PORTRAIT: dict[str, str] = {
+    "Superhero": (
+        "depicted as a confident superhero in a heroic stance, flowing cape, "
+        "subtle emblem on the chest, retaining the facial likeness from the reference photo"
+    ),
+    "Wizard": (
+        "depicted as a wise wizard in flowing robes holding a glowing artifact, "
+        "retaining the facial likeness from the reference photo"
+    ),
+    "Astronaut": (
+        "depicted as an astronaut in a sleek modern spacesuit with the helmet "
+        "off or visor up, retaining the facial likeness from the reference photo"
+    ),
+    "Anime Hero": (
+        "depicted in vibrant anime-hero style with dynamic pose and stylised hair, "
+        "retaining the facial likeness from the reference photo"
+    ),
+    "Cybernetic Operative": (
+        "depicted as a cybernetic operative in tactical gear with subtle augmentations "
+        "and a heads-up visor, retaining the facial likeness from the reference photo"
+    ),
+}
+
+
+def _build_card_image_prompt(card_data: dict, style: "CardStyle | None" = None) -> str:
+    """Build the gpt-image prompt for the SkillCard.
+
+    When ``style`` is None or all its fields are None/empty, the returned
+    prompt is byte-identical to the prior hard-coded prompt — the "current
+    look" is fully preserved for users who don't customize.
+    """
     name = card_data.get("name") or card_data.get("display_name") or "Unknown"
     title = card_data.get("title") or ""
     industry = card_data.get("industry") or "Technology"
@@ -654,14 +751,43 @@ async def _generate_card_image(client, settings: Settings, card_data: dict, phot
     flavor_text = card_data.get("flavor_text") or ""
     portrait_hint = card_data.get("portrait_hint") or ""
 
-    prompt = f"""A premium, high-end digital trading card for a futuristic skill-based game. Full card layout, vertical orientation.
+    style_preset = (getattr(style, "style_preset", None) or "").strip()
+    persona = (getattr(style, "persona_setting", None) or "").strip()
+    accent_color = (getattr(style, "accent_color", None) or "").strip()
+
+    # Design block: swap entire block for known non-default presets.
+    if style_preset and style_preset != "Futuristic Metallic" and style_preset in _STYLE_PRESET_DESIGN:
+        design_block = _STYLE_PRESET_DESIGN[style_preset]
+        outro_style_line = _STYLE_PRESET_OUTRO[style_preset]
+    else:
+        design_block = _DEFAULT_DESIGN_LINES
+        outro_style_line = _DEFAULT_STYLE_LINE
+
+    # Accent color: replace the design-block bullet that mentions "accents"
+    # (works for the default block and every preset block — they all have
+    # exactly one such line as the 3rd bullet).
+    if accent_color:
+        accent_line = f"- {accent_color} glowing accents"
+        new_lines = []
+        replaced = False
+        for line in design_block.split("\n"):
+            if not replaced and "accents" in line.lower():
+                new_lines.append(accent_line)
+                replaced = True
+            else:
+                new_lines.append(line)
+        design_block = "\n".join(new_lines)
+
+    # Portrait persona line.
+    if persona and persona != "Professional" and persona in _PERSONA_PORTRAIT:
+        portrait_line = f"- the person is {_PERSONA_PORTRAIT[persona]}"
+    else:
+        portrait_line = f"- the person is a confident professional, {title} appearance"
+
+    return f"""A premium, high-end digital trading card for a futuristic skill-based game. Full card layout, vertical orientation.
 
 Design:
-- metallic sci-fi frame with beveled edges
-- layered UI panels with depth and shadows
-- blue and cyan glowing accents
-- polished, sharp, AAA game UI quality
-- high contrast, crisp edges, no blur
+{design_block}
 
 Top section:
 - bold header bar reading "SKILL DECK"
@@ -669,7 +795,7 @@ Top section:
 
 Portrait:
 - centered character portrait inside a framed window
-- the person is a confident professional, {title} appearance
+{portrait_line}
 - {portrait_hint if portrait_hint else "background: blurred tech dashboards, code, holographic graphs"}
 - cinematic lighting, rim light, sharp focus
 
@@ -698,8 +824,22 @@ Bottom section:
 - growth focus tagline: "{growth_focus}"
 - flavor text quote: "{flavor_text}"
 
-Style: clean structured UI, resembles a collectible card game interface, precise alignment, symmetrical layout, subtle gradients and metallic textures.
+{outro_style_line}
 Quality: ultra detailed, sharp legible typography, no distortions, consistent spacing."""
+
+
+async def _generate_card_image(
+    client,
+    settings: Settings,
+    card_data: dict,
+    photo_base64: str | None = None,
+    style: "CardStyle | None" = None,
+) -> dict | None:
+    """Generate a full trading card image using gpt-image-2. Uses images.edit if photo provided."""
+    import base64 as b64mod
+    import io
+
+    prompt = _build_card_image_prompt(card_data, style)
 
     try:
         image_client = await _get_image_client(settings)
@@ -849,6 +989,7 @@ async def process_stateless_turn(
     photo_base64: str | None = None,
     settings: Settings | None = None,
     clifton_strengths: list[str] | None = None,
+    style: CardStyle | None = None,
 ) -> AsyncGenerator[str, None]:
     """Process a user turn statelessly and yield AI SDK SSE events.
 
@@ -1104,7 +1245,7 @@ async def process_stateless_turn(
             yield f'data: {json.dumps({"type": "text-start", "id": text_id + "-img"})}\n\n'
             yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": "\\n\\n✨ Generating your AI card portrait..."})}\n\n'
             try:
-                image_result = await _generate_card_image(client, settings, card_data_result, photo_base64)
+                image_result = await _generate_card_image(client, settings, card_data_result, photo_base64, style=style)
                 if image_result:
                     yield f'data: {json.dumps({"type": "data-cardImage", "data": image_result})}\n\n'
                     yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": " Done!"})}\n\n'

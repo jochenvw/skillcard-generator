@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from "react";
 import type { UIMessage } from "ai";
-import type { CardData } from "../types";
+import type { CardData, CardStyle } from "../types";
 import { SkillCard } from "./SkillCard";
 import { WelcomeBanner } from "./WelcomeBanner";
 import { CompactionIndicator } from "./CompactionIndicator";
 import { CardGeneratingIndicator } from "./CardGeneratingIndicator";
+import { CustomizeLookPanel } from "./CustomizeLookPanel";
 import { extractPdfText } from "../utils/pdfExtract";
 import { extractStrengths, type StrengthsResponse } from "../utils/strengthsClient";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
@@ -42,6 +43,8 @@ interface ChatPanelProps {
   onPdfError?: (msg: string) => void;
   onRegenerateCard?: () => void;
   regenerating?: boolean;
+  cardStyle?: CardStyle;
+  onCardStyleChange?: (next: CardStyle) => void;
 }
 
 function getMessageText(message: UIMessage): string {
@@ -67,6 +70,8 @@ export function ChatPanel({
   onPdfError,
   onRegenerateCard,
   regenerating,
+  cardStyle,
+  onCardStyleChange,
 }: ChatPanelProps) {
   const [input, setInputRaw] = useState("");
   const [pendingImage, setPendingImage] = useState<File | null>(null);
@@ -356,6 +361,14 @@ export function ChatPanel({
                   </span>
                 </div>
               ) : null}
+              {cardData && cardStyle && onCardStyleChange && onRegenerateCard && (
+                <CustomizeLookPanel
+                  style={cardStyle}
+                  onChange={onCardStyleChange}
+                  onRegenerate={onRegenerateCard}
+                  regenerating={regenerating}
+                />
+              )}
             </div>
             {regenerating && (
               <div className="mt-3 text-center text-xs font-mono uppercase tracking-wider text-violet-300/80">

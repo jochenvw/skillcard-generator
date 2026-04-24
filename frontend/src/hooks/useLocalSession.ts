@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { ClientSession, StateUpdate, ChatMessage } from '../types';
+import { EMPTY_CARD_STYLE } from '../types';
 
 const STORAGE_KEY = 'skillcard-session';
 
@@ -19,6 +20,7 @@ function createFreshSession(): ClientSession {
       profile: { name: null, role: null, photo: null, photoUrl: null },
     },
     cardData: null,
+    style: { ...EMPTY_CARD_STYLE },
     createdAt: new Date().toISOString(),
   };
 }
@@ -42,6 +44,17 @@ export function useLocalSession() {
         // It would crash the new SkillCard which expects strengths/inspirations/etc.
         if (parsed.cardData && !Array.isArray((parsed.cardData as { strengths?: unknown }).strengths)) {
           parsed.cardData = null;
+        }
+        // Backfill style preferences for sessions persisted before the
+        // customization feature existed.
+        if (!parsed.style || typeof parsed.style !== 'object') {
+          parsed.style = { ...EMPTY_CARD_STYLE };
+        } else {
+          parsed.style = {
+            stylePreset: parsed.style.stylePreset ?? null,
+            personaSetting: parsed.style.personaSetting ?? null,
+            accentColor: parsed.style.accentColor ?? null,
+          };
         }
         return parsed;
       } catch {

@@ -34,6 +34,12 @@ class CompletedStageSummary(BaseModel):
     summary: str
 
 
+class _CardStyleBody(BaseModel):
+    stylePreset: str | None = None
+    personaSetting: str | None = None
+    accentColor: str | None = None
+
+
 class StatelessChatRequest(BaseModel):
     message: str
     currentStageId: str = "introduction"
@@ -43,6 +49,7 @@ class StatelessChatRequest(BaseModel):
     hasImage: bool = False
     photoBase64: str | None = None
     cliftonStrengths: list[str] = Field(default_factory=list)
+    style: _CardStyleBody | None = None
 
 
 # ── Endpoint ──
@@ -59,6 +66,7 @@ async def chat(
     followed by a data-stateUpdate event containing the updated state
     for the client to persist in localStorage.
     """
+    from profile_agent.models.llm_contracts import CardStyle
     from profile_agent.services.stateless_interview_service import (
         CompletedStageSummary as SvcSummary,
         IdentityContext as SvcIdentity,
@@ -89,6 +97,16 @@ async def chat(
         for s in body.completedStageSummaries
     ]
 
+    style: CardStyle | None = None
+    if body.style is not None and any(
+        v for v in (body.style.stylePreset, body.style.personaSetting, body.style.accentColor)
+    ):
+        style = CardStyle(
+            style_preset=body.style.stylePreset,
+            persona_setting=body.style.personaSetting,
+            accent_color=body.style.accentColor,
+        )
+
     async def stream_response():
         async for chunk in process_stateless_turn(
             user_text=user_text,
@@ -99,6 +117,7 @@ async def chat(
             has_image=body.hasImage,
             photo_base64=body.photoBase64,
             clifton_strengths=body.cliftonStrengths,
+            style=style,
         ):
             yield chunk
 
