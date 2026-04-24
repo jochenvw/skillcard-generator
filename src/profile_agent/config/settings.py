@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # Azure AI Foundry
     foundry_project_endpoint: str = ""
     foundry_model_deployment_name: str = "gpt-5.4"
-    foundry_image_deployment_name: str = "gpt-image-1.5"
+    foundry_image_deployment_name: str = "gpt-image-2-1"
 
     # Azure OpenAI direct/model endpoint settings
     azure_openai_endpoint: str = ""

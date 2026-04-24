@@ -637,7 +637,7 @@ def format_bullets(items: list[str]) -> str:
 
 
 async def _generate_card_image(client, settings: Settings, card_data: dict, photo_base64: str | None = None) -> dict | None:
-    """Generate a full trading card image using gpt-image-1.5. Uses images.edit if photo provided."""
+    """Generate a full trading card image using gpt-image-2. Uses images.edit if photo provided."""
     import base64 as b64mod
     import io
 

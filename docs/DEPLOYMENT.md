@@ -17,7 +17,7 @@ Step-by-step instructions to provision Azure infrastructure, configure identity,
 You also need:
 
 - An Azure subscription with **Owner** or **Contributor + User Access Administrator** role
-- An Azure OpenAI resource with **gpt-4o** and **gpt-image-1.5** deployments
+- An Azure OpenAI resource with **gpt-4o** and **gpt-image-2-1** deployments
 - (Optional) An Azure AI Foundry project if deploying in Foundry mode
 
 ---
