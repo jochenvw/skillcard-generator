@@ -23,7 +23,7 @@ router = APIRouter(tags=["regenerate"])
 class _Identity(BaseModel):
     name: str = ""
     role: str = ""
-    title: str = ""
+    title: str | None = None
     photoStatus: str = "unknown"
 
 

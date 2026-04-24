@@ -10,7 +10,7 @@ function createFreshSession(): ClientSession {
     currentStageId: 'introduction',
     completedStages: [],
     currentStageMessages: [],
-    identity: { name: null, role: null, photoStatus: 'unknown' },
+    identity: { name: null, role: null, title: null, photoStatus: 'unknown' },
     photoBase64: null,
     cliftonStrengths: [],
     panelData: {
@@ -38,6 +38,10 @@ export function useLocalSession() {
         // Backfill fields added in later versions
         if (!Array.isArray(parsed.cliftonStrengths)) {
           parsed.cliftonStrengths = [];
+        }
+        // Backfill identity.title added in later versions
+        if (parsed.identity && parsed.identity.title === undefined) {
+          parsed.identity = { ...parsed.identity, title: null };
         }
         // Discard cardData persisted under the legacy gamey schema
         // (top_stats / weaknesses / signature_ability / level / xp / rarity).

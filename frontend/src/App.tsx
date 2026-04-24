@@ -184,6 +184,7 @@ export default function App() {
         identity: {
           name: session.identity.name || "",
           role: session.identity.role || "",
+          title: session.identity.title || "",
           photoStatus: session.identity.photoStatus,
         },
         hasImage,
