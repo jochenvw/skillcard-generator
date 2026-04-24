@@ -102,6 +102,20 @@ class SessionSnapshot(BaseModel):
 # ── Card Generation ─────────────────────────────────────────────────
 
 
+class CardStyle(BaseModel):
+    """User-controlled stylistic preferences for the generated card image.
+
+    All fields optional; a fully-empty CardStyle (or None) yields the default
+    look (Futuristic Metallic / Professional / blue-cyan accents). The card
+    *layout* is unaffected — only the image-prompt's design block, accent-
+    color line, and portrait line are touched.
+    """
+
+    style_preset: str | None = None
+    persona_setting: str | None = None
+    accent_color: str | None = None
+
+
 class CardAbility(BaseModel):
     name: str
     description: str

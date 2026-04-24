@@ -32,12 +32,19 @@ class _Stage(BaseModel):
     summary: str
 
 
+class _CardStyleBody(BaseModel):
+    stylePreset: str | None = None
+    personaSetting: str | None = None
+    accentColor: str | None = None
+
+
 class RegenerateRequest(BaseModel):
     identity: _Identity = Field(default_factory=_Identity)
     completedStageSummaries: list[_Stage] = Field(default_factory=list)
     cliftonStrengths: list[str] = Field(default_factory=list)
     photoBase64: str | None = None
     includeImage: bool = True
+    style: _CardStyleBody | None = None
 
 
 @router.post("/regenerate")
@@ -85,7 +92,17 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
 
     if body.includeImage:
         try:
-            img = await _generate_card_image(client, settings, card_data, photo_base64=body.photoBase64)
+            from profile_agent.models.llm_contracts import CardStyle
+            style: CardStyle | None = None
+            if body.style is not None and any(
+                v for v in (body.style.stylePreset, body.style.personaSetting, body.style.accentColor)
+            ):
+                style = CardStyle(
+                    style_preset=body.style.stylePreset,
+                    persona_setting=body.style.personaSetting,
+                    accent_color=body.style.accentColor,
+                )
+            img = await _generate_card_image(client, settings, card_data, photo_base64=body.photoBase64, style=style)
             if img:
                 response["cardImage"] = img
         except Exception:

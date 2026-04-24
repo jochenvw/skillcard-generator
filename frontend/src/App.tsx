@@ -5,7 +5,8 @@ import { useAuth } from "./auth";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { ChatPanel } from "./components/ChatPanel";
 import { SummaryPanel } from "./components/SummaryPanel";
-import type { CardData, StateUpdate, ClientSession } from "./types";
+import type { CardData, StateUpdate, ClientSession, CardStyle } from "./types";
+import { EMPTY_CARD_STYLE } from "./types";
 import type { StrengthsResponse } from "./utils/strengthsClient";
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,7 @@ export default function App() {
         cliftonStrengths: session.cliftonStrengths || [],
         photoBase64: session.photoBase64,
         includeImage: true,
+        style: session.style ?? EMPTY_CARD_STYLE,
       };
       const res = await fetch("/api/regenerate", {
         method: "POST",
@@ -188,6 +190,7 @@ export default function App() {
         hasImage,
         photoBase64: session.photoBase64 || undefined,
         clifton_strengths: session.cliftonStrengths || [],
+        style: session.style ?? EMPTY_CARD_STYLE,
       };
 
       const assistantMsgId = `a-${Date.now()}`;
@@ -447,6 +450,14 @@ export default function App() {
     setCardImageSrc(null);
   }, [resetSession]);
 
+  // ── Customize-look handler ──────────────────────────────────────────────
+  const handleCardStyleChange = useCallback(
+    (next: CardStyle) => {
+      updateSession({ style: next });
+    },
+    [updateSession],
+  );
+
   // ── Loading state ───────────────────────────────────────────────────────
   if (loading || !session) {
     return (
@@ -576,6 +587,8 @@ export default function App() {
           onPdfError={handlePdfError}
           onRegenerateCard={regenerateCard}
           regenerating={regenerating}
+          cardStyle={session.style ?? EMPTY_CARD_STYLE}
+          onCardStyleChange={handleCardStyleChange}
         />
       </main>
 

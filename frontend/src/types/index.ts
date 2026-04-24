@@ -65,6 +65,18 @@ export interface Identity {
   photoStatus: 'unknown' | 'uploaded' | 'skipped';
 }
 
+export interface CardStyle {
+  stylePreset: string | null;
+  personaSetting: string | null;
+  accentColor: string | null;
+}
+
+export const EMPTY_CARD_STYLE: CardStyle = {
+  stylePreset: null,
+  personaSetting: null,
+  accentColor: null,
+};
+
 export interface ClientSession {
   sessionId: string;
   currentStageId: string;
@@ -75,6 +87,7 @@ export interface ClientSession {
   cliftonStrengths: string[];
   panelData: PanelData;
   cardData: CardData | null;
+  style: CardStyle;
   createdAt: string;
 }
 
