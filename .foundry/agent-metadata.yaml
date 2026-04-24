@@ -19,5 +19,5 @@ spec:
   models:
     - deployment: gpt-4o
       purpose: conversation
-    - deployment: gpt-image-1.5
+    - deployment: gpt-image-2-1
       purpose: image-generation
