@@ -4,6 +4,9 @@ import type { SkillCardProfile } from "../types";
 import { CardFrame } from "./card/CardFrame";
 import { CardPortrait } from "./card/CardPortrait";
 import { CardPanel } from "./card/CardPanel";
+import { createLogger } from "../utils/logger";
+
+const log = createLogger("skill-card");
 
 interface SkillCardProps {
   data: SkillCardProfile;
@@ -25,7 +28,7 @@ export function SkillCard({ data, photoBase64 }: SkillCardProps) {
       link.href = dataUrl;
       link.click();
     } catch (err) {
-      console.error("Card export failed:", err);
+      log.error("Card export failed", err);
     }
   }, [data.name]);
 

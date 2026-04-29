@@ -11,6 +11,9 @@ import { CustomizeLookPanel } from "./CustomizeLookPanel";
 import { extractPdfText } from "../utils/pdfExtract";
 import { extractStrengths, type StrengthsResponse } from "../utils/strengthsClient";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
+import { createLogger } from "../utils/logger";
+
+const log = createLogger("chat-panel");
 
 interface SlashCommand {
   command: string;
@@ -239,14 +242,14 @@ export function ChatPanel({
       if (!text) {
         throw new Error("No selectable text found in PDF.");
       }
-      console.info("[pdf] extracted text length:", text.length);
+      log.info("pdf extracted", { length: text.length });
       const authHeaders = await getAuthHeaders();
       const response = await extractStrengths(text, authHeaders);
-      console.info("[pdf] strengths extracted:", response.strengths.length);
+      log.info("pdf strengths extracted", { count: response.strengths.length });
       onPdfStrengths?.(response);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to process PDF.";
-      console.error("[pdf] processing failed:", msg);
+      log.error("pdf processing failed", msg);
       setPdfError(msg);
       onPdfError?.(msg);
     } finally {

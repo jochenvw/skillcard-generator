@@ -8,6 +8,9 @@ import { SummaryPanel } from "./components/SummaryPanel";
 import type { CardData, StateUpdate, ClientSession, CardStyle } from "./types";
 import { EMPTY_CARD_STYLE } from "./types";
 import type { StrengthsResponse } from "./utils/strengthsClient";
+import { createLogger } from "./utils/logger";
+
+const log = createLogger("app");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,7 +77,7 @@ export default function App() {
       else localStorage.removeItem("skillcard-image");
     } catch (err) {
       // QuotaExceeded for very large data URLs — log but don't crash.
-      console.warn("Could not cache card image to localStorage:", err);
+      log.warn("Could not cache card image to localStorage", err);
     }
   }, []);
   const [compacting, setCompacting] = useState(false);
@@ -114,7 +117,7 @@ export default function App() {
           setCardImageSrc(`data:image/png;base64,${imgBody.cardImage.base64}`);
         }
       } catch (err) {
-        console.error("Demo card load failed:", err);
+        log.error("Demo card load failed", err);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,7 +128,7 @@ export default function App() {
   const regenerateCard = useCallback(async () => {
     if (!session || regenerating) return;
     if (!session.completedStages?.length) {
-      console.warn("Regenerate: no completed stages in session");
+      log.warn("Regenerate skipped — no completed stages in session");
       return;
     }
     setRegenerating(true);
@@ -144,6 +147,7 @@ export default function App() {
         includeImage: true,
         style: session.style ?? EMPTY_CARD_STYLE,
       };
+      log.info("regenerate → POST /api/regenerate", { stages: session.completedStages.length });
       const res = await fetch("/api/regenerate", {
         method: "POST",
         headers,
@@ -159,19 +163,23 @@ export default function App() {
       setCardData(body.cardData);
       updateSession({ cardData: body.cardData });
       if (body.cardImage?.url) {
+        log.info("regenerate ✓ image (url)");
         setCardImageSrc(body.cardImage.url);
       } else if (body.cardImage?.base64) {
+        log.info("regenerate ✓ image (base64)", { bytes: body.cardImage.base64.length });
         setCardImageSrc(`data:image/png;base64,${body.cardImage.base64}`);
       } else if (body.cardImageError === "rate_limited") {
+        log.warn("regenerate image rate-limited", { retryAfter: body.cardImageRetryAfter });
         const wait = body.cardImageRetryAfter
           ? `Please wait ~${body.cardImageRetryAfter}s and try again.`
           : "Please wait a minute and try again.";
         alert(`Image service is rate-limited right now. Card text was regenerated, but the portrait could not be created. ${wait}`);
       } else if (body.cardImageError) {
+        log.warn("regenerate image failed", { error: body.cardImageError });
         alert("Image generation failed. Card text was regenerated. Try again in a moment.");
       }
     } catch (err) {
-      console.error("Regenerate failed:", err);
+      log.error("Regenerate failed", err);
     } finally {
       setRegenerating(false);
     }
@@ -351,7 +359,7 @@ export default function App() {
           );
         }
       } catch (err) {
-        console.error("Chat stream error:", err);
+        log.error("Chat stream error", err);
         const errText =
           assistantText || "Sorry, something went wrong. Please try again.";
         setMessages((prev) =>
