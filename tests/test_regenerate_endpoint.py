@@ -197,7 +197,7 @@ class TestRegenerateEndpoint:
         """The completed stage summaries from the request must reach _run_synthesis."""
         synthesis_received: list = []
 
-        async def capture_synthesis(client, settings, completed_summaries, current_messages):
+        async def capture_synthesis(client, settings, completed_summaries, current_messages, additional_context=None):
             synthesis_received.extend(completed_summaries)
             return SAMPLE_SYNTHESIS
 
