@@ -262,3 +262,59 @@ html, body, #root {
 .skillcard-frame:hover {
   transform: translateY(-2px);
 }
+
+/* ── Markdown rendering inside assistant chat bubbles ─────── */
+.markdown-message > *:first-child { margin-top: 0; }
+.markdown-message > *:last-child { margin-bottom: 0; }
+.markdown-message p { margin: 0.5em 0; }
+.markdown-message strong { font-weight: 600; color: #fff; }
+.markdown-message em { font-style: italic; }
+.markdown-message h1,
+.markdown-message h2,
+.markdown-message h3,
+.markdown-message h4 {
+  font-weight: 600;
+  color: #fff;
+  margin: 0.75em 0 0.4em;
+  line-height: 1.25;
+}
+.markdown-message h1 { font-size: 1.15em; }
+.markdown-message h2 { font-size: 1.08em; }
+.markdown-message h3 { font-size: 1em; }
+.markdown-message ul,
+.markdown-message ol { margin: 0.4em 0; padding-left: 1.4em; }
+.markdown-message ul { list-style: disc; }
+.markdown-message ol { list-style: decimal; }
+.markdown-message li { margin: 0.2em 0; }
+.markdown-message li > p { margin: 0; }
+.markdown-message a { color: #67e8f9; text-decoration: underline; }
+.markdown-message a:hover { color: #a5f3fc; }
+.markdown-message code {
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.markdown-message pre {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.6em 0.8em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.markdown-message pre code { background: transparent; padding: 0; }
+.markdown-message blockquote {
+  border-left: 3px solid rgba(0, 220, 255, 0.5);
+  padding-left: 0.8em;
+  margin: 0.5em 0;
+  color: #d4d4d8;
+  font-style: italic;
+}
+.markdown-message hr { border-color: rgba(255,255,255,0.12); margin: 0.8em 0; }
+.markdown-message table { border-collapse: collapse; margin: 0.5em 0; }
+.markdown-message th,
+.markdown-message td {
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 0.3em 0.6em;
+}

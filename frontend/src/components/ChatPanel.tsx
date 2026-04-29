@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from "react";
 import type { UIMessage } from "ai";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { CardData, CardStyle } from "../types";
 import { SkillCard } from "./SkillCard";
 import { WelcomeBanner } from "./WelcomeBanner";
@@ -306,7 +308,13 @@ export function ChatPanel({
                     : "bg-zinc-800/80 text-zinc-200 rounded-bl-md border border-zinc-700/50 border-l-2 border-l-cyan-500/40"
                 }`}
               >
-                <div className="whitespace-pre-wrap">{text}</div>
+                {message.role === "user" ? (
+                  <div className="whitespace-pre-wrap">{text}</div>
+                ) : (
+                  <div className="markdown-message">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+                  </div>
+                )}
               </div>
             </div>
           );
