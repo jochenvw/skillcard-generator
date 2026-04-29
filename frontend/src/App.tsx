@@ -190,6 +190,9 @@ export default function App() {
         hasImage,
         photoBase64: session.photoBase64 || undefined,
         clifton_strengths: session.cliftonStrengths || [],
+        linkedin_skills: session.linkedinSkills || undefined,
+        github_skills: session.githubSkills || undefined,
+        bulk_extracted: session.bulkExtracted || undefined,
         style: session.style ?? EMPTY_CARD_STYLE,
       };
 

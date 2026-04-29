@@ -13,6 +13,9 @@ function createFreshSession(): ClientSession {
     identity: { name: null, role: null, title: null, photoStatus: 'unknown' },
     photoBase64: null,
     cliftonStrengths: [],
+    linkedinSkills: null,
+    githubSkills: null,
+    bulkExtracted: null,
     panelData: {
       stages: [],
       currentStageId: 'introduction',
@@ -39,6 +42,11 @@ export function useLocalSession() {
         if (!Array.isArray(parsed.cliftonStrengths)) {
           parsed.cliftonStrengths = [];
         }
+        // Backfill linkedin/github profile skills
+        if (!parsed.linkedinSkills) parsed.linkedinSkills = null;
+        if (!parsed.githubSkills) parsed.githubSkills = null;
+        // Backfill bulk extracted profile data
+        if (parsed.bulkExtracted === undefined) parsed.bulkExtracted = null;
         // Backfill identity.title added in later versions
         if (parsed.identity && parsed.identity.title === undefined) {
           parsed.identity = { ...parsed.identity, title: null };
@@ -97,6 +105,8 @@ export function useLocalSession() {
           identity: update.identity,
           panelData: update.panelData,
           currentStageId: update.currentStageId,
+          // Persist bulk-extracted profile data (first extraction wins)
+          bulkExtracted: update.bulkExtracted ?? prev.bulkExtracted,
         };
 
         if (update.stageAdvanced) {

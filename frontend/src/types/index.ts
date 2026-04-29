@@ -85,10 +85,21 @@ export interface ClientSession {
   identity: Identity;
   photoBase64: string | null;
   cliftonStrengths: string[];
+  linkedinSkills: ProfileSkills | null;
+  githubSkills: ProfileSkills | null;
+  bulkExtracted: Record<string, unknown> | null;
   panelData: PanelData;
   cardData: CardData | null;
   style: CardStyle;
   createdAt: string;
+}
+
+export interface ProfileSkills {
+  skills: { rank: number; name: string; category: string; evidence: string; confidence: number }[];
+  projects: { name: string; description: string; technologies?: string[]; evidence: string; confidence: number }[];
+  summary: string;
+  highlights: string[];
+  source: string;
 }
 
 export interface StateUpdate {
@@ -97,4 +108,5 @@ export interface StateUpdate {
   stageAdvanced: boolean;
   stageSummary: string | null;
   panelData: PanelData;
+  bulkExtracted?: Record<string, unknown> | null;
 }
