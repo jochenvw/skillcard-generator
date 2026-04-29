@@ -14,8 +14,6 @@
 
 AI-powered conversational agent that discovers your unique technical strengths through a 10-stage interview, then generates a collectible-style profile card.
 
-![loaded](screenshots/01_loaded.png)
-
 ## Getting Started
 
 **Install:**
