@@ -488,7 +488,7 @@ async def _run_synthesis(
         model=settings.effective_azure_openai_deployment,
         messages=[{"role": "system", "content": prompt}],
         temperature=0.4,
-        max_completion_tokens=2000,
+        max_completion_tokens=6000,
     )
     return response.choices[0].message.content or ""
 
@@ -552,7 +552,7 @@ async def _run_card_generation(
             {"role": "user", "content": card_prompt},
         ],
         temperature=0.7,
-        max_completion_tokens=2000,
+        max_completion_tokens=6000,
     )
     card_text = card_response.choices[0].message.content or ""
 
