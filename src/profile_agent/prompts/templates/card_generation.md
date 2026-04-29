@@ -23,9 +23,21 @@ $evidence_highlights
 ## CliftonStrengths (if any, may be empty)
 $clifton_strengths
 
+## LinkedIn Profile Evidence (if any, may be empty)
+$linkedin_evidence
+
+## GitHub Profile Evidence (if any, may be empty)
+$github_evidence
+
 ## Instructions
 
 Extract content from the evidence above into the **SkillCardProfile** JSON shape below. Every field must be grounded in what the person actually said.
+
+### Evidence Precedence
+1. **Interview answers** (stage evidence) are the primary source — always prefer these.
+2. **LinkedIn data** provides professional context and claimed skills — use to supplement.
+3. **GitHub data** provides technical evidence of actual coding activity — use to validate and enrich technical skills.
+4. **CliftonStrengths** are used verbatim in their own field.
 
 ### Field mapping (from the interview stages)
 

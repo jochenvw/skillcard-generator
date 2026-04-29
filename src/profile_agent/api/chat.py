@@ -49,6 +49,9 @@ class StatelessChatRequest(BaseModel):
     hasImage: bool = False
     photoBase64: str | None = None
     cliftonStrengths: list[str] = Field(default_factory=list)
+    linkedin_skills: dict | None = None
+    github_skills: dict | None = None
+    bulk_extracted: dict | None = None
     style: _CardStyleBody | None = None
 
 
@@ -117,6 +120,9 @@ async def chat(
             has_image=body.hasImage,
             photo_base64=body.photoBase64,
             clifton_strengths=body.cliftonStrengths,
+            linkedin_skills=body.linkedin_skills,
+            github_skills=body.github_skills,
+            bulk_extracted=body.bulk_extracted,
             style=style,
         ):
             yield chunk

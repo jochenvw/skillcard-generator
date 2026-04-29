@@ -49,6 +49,10 @@ def create_fastapi_app() -> FastAPI:
     from profile_agent.api.strengths import router as strengths_router
     app.include_router(strengths_router, prefix="/api")
 
+    # LinkedIn + GitHub profile extraction API (stateless)
+    from profile_agent.api.profiles import router as profiles_router
+    app.include_router(profiles_router, prefix="/api")
+
     # Demo card endpoint (returns pre-baked persona + generated image)
     from profile_agent.api.demo import router as demo_router
     app.include_router(demo_router, prefix="/api")

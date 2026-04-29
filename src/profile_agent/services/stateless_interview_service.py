@@ -34,6 +34,10 @@ PROGRESS_COMMANDS = ("progress", "what stage", "where are we", "stage are we", "
 FINALIZE_COMMANDS = ("done", "finish", "generate card", "finalize", "complete")
 START_OVER_COMMANDS = ("start over", "restart", "reset", "begin again", "start from scratch")
 JUMP_TO_CARD_COMMANDS = ("/card", "/generate")
+REGENERATE_COMMANDS = (
+    "regenerate", "regenerate card", "regen", "generate again", "rebuild",
+    "redo card", "redo", "update card", "remake", "make it again",
+)
 
 
 @lru_cache(maxsize=1)
@@ -187,6 +191,7 @@ class StateUpdate:
     panel_data: dict = field(default_factory=dict)
     session_reset: bool = False
     card_data: dict | None = None
+    bulk_extracted: dict | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -201,6 +206,8 @@ class StateUpdate:
             d["sessionReset"] = True
         if self.card_data is not None:
             d["cardData"] = self.card_data
+        if self.bulk_extracted is not None:
+            d["bulkExtracted"] = self.bulk_extracted
         return d
 
 
@@ -319,6 +326,110 @@ async def update_identity_async(
     return new
 
 
+# ── Bulk profile text extraction ──
+
+_BULK_TEXT_MIN_LENGTH = 200  # Minimum chars to trigger bulk extraction
+
+
+def _is_bulk_profile_text(text: str) -> bool:
+    """Detect if user input is a large block of profile/resume/bio text."""
+    stripped = text.strip()
+    if len(stripped) < _BULK_TEXT_MIN_LENGTH:
+        return False
+    # Must not be a command-only message
+    lowered = stripped.lower()
+    if lowered.startswith(("/", "!")):
+        return False
+    # Only reject if the ENTIRE message is a short command
+    # (don't reject long text just because it contains words like "done" or "complete")
+    if len(stripped) < 300 and any(cmd == lowered for cmd in NEXT_STAGE_COMMANDS + FINALIZE_COMMANDS + START_OVER_COMMANDS):
+        return False
+    return True
+
+
+async def _extract_bulk_profile(
+    user_text: str,
+    client: AsyncAzureOpenAI,
+    settings: Settings,
+) -> dict | None:
+    """Extract structured profile data from a large text block via LLM."""
+    prompt = render_template("bulk_extraction", user_text=user_text[:50_000])
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.effective_azure_openai_deployment,
+            messages=[{"role": "system", "content": prompt}],
+            temperature=0.2,
+            max_completion_tokens=2000,
+        )
+    except Exception:
+        logger.warning("Bulk profile extraction LLM call failed", exc_info=True)
+        return None
+
+    content = (response.choices[0].message.content or "") if response.choices else ""
+    parsed = _extract_json(content)
+    if not isinstance(parsed, dict):
+        logger.warning("Bulk profile extraction: could not parse JSON")
+        return None
+
+    logger.info(
+        "Bulk extraction success | name=%s title=%s skills=%d projects=%d",
+        parsed.get("name"), parsed.get("title"),
+        len(parsed.get("skills", [])), len(parsed.get("projects", [])),
+    )
+    return parsed
+
+
+def _format_bulk_context(extracted: dict) -> str:
+    """Format bulk-extracted profile data into a context block for the system prompt."""
+    parts: list[str] = []
+    parts.append("## Pre-extracted profile data (from user's pasted text)")
+    parts.append("The user already provided the following information in a previous message. "
+                 "DO NOT ask for any of this again. Only ask follow-up questions for items NOT listed here.\n")
+
+    if extracted.get("name"):
+        parts.append(f"**Name:** {extracted['name']}")
+    if extracted.get("title"):
+        parts.append(f"**Title/Role:** {extracted['title']}")
+    if extracted.get("industry"):
+        parts.append(f"**Industry:** {extracted['industry']}")
+
+    skills = extracted.get("skills", [])
+    if skills:
+        skill_names = [s["name"] for s in skills if isinstance(s, dict) and s.get("name")]
+        if skill_names:
+            parts.append(f"**Skills:** {', '.join(skill_names)}")
+
+    projects = extracted.get("projects", [])
+    if projects:
+        proj_names = [p["name"] for p in projects if isinstance(p, dict) and p.get("name")]
+        if proj_names:
+            parts.append(f"**Projects:** {', '.join(proj_names)}")
+
+    if extracted.get("heroes"):
+        parts.append(f"**Heroes/Role Models:** {', '.join(extracted['heroes'])}")
+    if extracted.get("influences"):
+        parts.append(f"**Influences:** {', '.join(extracted['influences'])}")
+    if extracted.get("aspirations"):
+        parts.append(f"**Aspirations:** {', '.join(extracted['aspirations'])}")
+    if extracted.get("strengths"):
+        parts.append(f"**Strengths:** {', '.join(extracted['strengths'])}")
+    if extracted.get("collaboration_style"):
+        parts.append(f"**Collaboration style:** {extracted['collaboration_style']}")
+    if extracted.get("learning_interests"):
+        parts.append(f"**Learning interests:** {', '.join(extracted['learning_interests'])}")
+    if extracted.get("accomplishments"):
+        parts.append(f"**Accomplishments:** {', '.join(extracted['accomplishments'])}")
+    if extracted.get("education"):
+        parts.append(f"**Education:** {', '.join(extracted['education'])}")
+
+    parts.append("\n**Instruction:** Acknowledge what you already know from this data. "
+                 "Do NOT re-ask for anything listed above. Only ask targeted follow-ups "
+                 "for information that is genuinely missing for the current stage.")
+
+    return "\n".join(parts)
+
+
 def _intro_missing(identity: IdentityContext) -> list[str]:
     missing: list[str] = []
     if not identity.name:
@@ -343,6 +454,24 @@ def _completion_hint(stage: StageDefinition, turn_count: int, identity: Identity
     if turn_count < FAST_STAGE_HARD_TURN_LIMIT:
         return "Almost done. Add one final concrete detail, or type `next stage` to fast-track."
     return "Fast-track threshold reached. Moving to the next stage."
+
+
+def _is_regeneration_intent(text: str) -> bool:
+    """Detect if the user wants to regenerate/update their card."""
+    lowered = text.lower().strip()
+    # Exact regeneration commands
+    if any(cmd in lowered for cmd in REGENERATE_COMMANDS):
+        return True
+    # Edit/update patterns — "update this", "change X", "actually X", "add X to card"
+    edit_patterns = (
+        "update this", "update my", "change my", "change the", "change it",
+        "actually change", "actually update", "add this", "add that",
+        "fix my", "fix the", "edit my", "edit the", "modify",
+        "to card", "to the card", "on my card", "on the card",
+    )
+    if any(p in lowered for p in edit_patterns):
+        return True
+    return False
 
 
 def _build_panel_data(current_stage_id: str, completed_ids: list[str],
@@ -469,12 +598,15 @@ async def _run_synthesis(
     settings: Settings,
     completed_summaries: list[CompletedStageSummary],
     current_stage_messages: list[dict],
+    additional_context: str | None = None,
 ) -> str:
     evidence_lines: list[str] = []
     for s in completed_summaries:
         evidence_lines.append(f"[{s.id}]: {s.summary}")
     for msg in current_stage_messages:
         evidence_lines.append(f"[current] {msg.get('role', 'user')}: {msg.get('content', '')}")
+    if additional_context:
+        evidence_lines.append(f"[additional_context]: {additional_context}")
 
     stage_summary_lines = [f"- **{s.id}**: {s.summary}" for s in completed_summaries]
 
@@ -500,6 +632,8 @@ async def _run_card_generation(
     display_name: str,
     photo_status: str,
     clifton_strengths: list[str] | None = None,
+    linkedin_skills: dict | None = None,
+    github_skills: dict | None = None,
     completed_summaries: list[CompletedStageSummary] | None = None,
     role_text: str | None = None,
 ) -> dict:
@@ -524,6 +658,40 @@ async def _run_card_generation(
     clifton_list = [s for s in (clifton_strengths or []) if isinstance(s, str) and s.strip()]
     clifton_block = "\n".join(f"• {s.strip()}" for s in clifton_list) if clifton_list else ""
 
+    # Format LinkedIn evidence
+    linkedin_block = ""
+    if linkedin_skills and (linkedin_skills.get("skills") or linkedin_skills.get("projects")):
+        parts = [f"Summary: {linkedin_skills.get('summary', 'N/A')}"]
+        for sk in linkedin_skills.get("skills", []):
+            conf = sk.get("confidence", "?")
+            parts.append(f"• {sk.get('name', '?')} ({sk.get('category', '?')}, confidence={conf}): {sk.get('evidence', '')}")
+        if linkedin_skills.get("projects"):
+            parts.append("\nProjects:")
+            for proj in linkedin_skills["projects"]:
+                techs = ", ".join(proj.get("technologies", [])) if proj.get("technologies") else "N/A"
+                parts.append(f"  → {proj.get('name', '?')} [{techs}]: {proj.get('description', '')}")
+        if linkedin_skills.get("highlights"):
+            parts.append("Highlights: " + "; ".join(linkedin_skills["highlights"]))
+        linkedin_block = "\n".join(parts)
+
+    # Format GitHub evidence
+    github_block = ""
+    if github_skills and (github_skills.get("skills") or github_skills.get("projects")):
+        parts = [f"Summary: {github_skills.get('summary', 'N/A')}"]
+        for sk in github_skills.get("skills", []):
+            conf = sk.get("confidence", "?")
+            parts.append(f"• {sk.get('name', '?')} ({sk.get('category', '?')}, confidence={conf}): {sk.get('evidence', '')}")
+        if github_skills.get("projects"):
+            parts.append("\nNotable repositories:")
+            for proj in github_skills["projects"]:
+                techs = ", ".join(proj.get("technologies", [])) if proj.get("technologies") else "N/A"
+                parts.append(f"  → {proj.get('name', '?')} [{techs}]: {proj.get('description', '')}")
+        if github_skills.get("focus_areas"):
+            parts.append("Focus areas: " + ", ".join(github_skills["focus_areas"]))
+        if github_skills.get("highlights"):
+            parts.append("Highlights: " + "; ".join(github_skills["highlights"]))
+        github_block = "\n".join(parts)
+
     # Raw per-stage evidence — needed because the synthesis JSON above only
     # captures technical skill dimensions and drops the rich content about
     # heroes, books, aspirations etc.
@@ -543,6 +711,8 @@ async def _run_card_generation(
         skill_matrix=skill_matrix,
         evidence_highlights=evidence_highlights or "No highlights available.",
         clifton_strengths=clifton_block,
+        linkedin_evidence=linkedin_block,
+        github_evidence=github_block,
         stage_evidence=stage_evidence,
     )
     card_response = await client.chat.completions.create(
@@ -989,6 +1159,9 @@ async def process_stateless_turn(
     photo_base64: str | None = None,
     settings: Settings | None = None,
     clifton_strengths: list[str] | None = None,
+    linkedin_skills: dict | None = None,
+    github_skills: dict | None = None,
+    bulk_extracted: dict | None = None,
     style: CardStyle | None = None,
 ) -> AsyncGenerator[str, None]:
     """Process a user turn statelessly and yield AI SDK SSE events.
@@ -1014,6 +1187,50 @@ async def process_stateless_turn(
     if stage is None:
         stage = get_first_stage()
         current_stage_id = stage.id
+
+    # ── Bulk profile text detection & extraction ──
+    # Always extract from new long-form text; merge with any previously extracted data
+    if _is_bulk_profile_text(user_text):
+        logger.info("BULK TEXT detected | len=%d stage=%s", len(user_text), current_stage_id)
+        fresh_extracted = await _extract_bulk_profile(user_text, client, settings)
+        if fresh_extracted:
+            if bulk_extracted:
+                # Merge: new extraction wins for non-empty fields
+                merged = dict(bulk_extracted)
+                for key, val in fresh_extracted.items():
+                    if val and (isinstance(val, str) or (isinstance(val, list) and len(val) > 0)):
+                        merged[key] = val
+                bulk_extracted = merged
+            else:
+                bulk_extracted = fresh_extracted
+
+    # Update identity from bulk-extracted data
+    # Fresh extraction from current message overrides empty fields;
+    # if we just did a fresh extraction this turn, also allow overriding
+    # existing values since the user is explicitly providing new info.
+    _fresh_this_turn = _is_bulk_profile_text(user_text)
+    if bulk_extracted:
+        extracted_name = bulk_extracted.get("name")
+        extracted_title = bulk_extracted.get("title")
+        new_name = identity.name
+        new_role = identity.role
+        new_title = identity.title
+
+        if extracted_name and (not new_name or _fresh_this_turn):
+            new_name = extracted_name
+        if extracted_title and (not new_title or _fresh_this_turn):
+            new_title = extracted_title
+        if extracted_title and (not new_role or _fresh_this_turn):
+            new_role = extracted_title
+
+        if (new_name != identity.name or new_role != identity.role
+                or new_title != identity.title):
+            identity = IdentityContext(
+                name=new_name,
+                role=new_role,
+                title=new_title,
+                photo_status=identity.photo_status,
+            )
 
     # Update identity from user text (LLM-augmented during the intro stage)
     identity = await update_identity_async(
@@ -1211,16 +1428,36 @@ async def process_stateless_turn(
         return
 
     # ── Card generation stage: generate card spec on first turn ──
-    if stage.id == "card_generation" and turn_count == 0:
+    # Also handle regeneration requests (turn_count > 0 with regen intent)
+    is_card_stage = stage.id == "card_generation"
+    is_regen = is_card_stage and turn_count > 0 and (
+        _is_regeneration_intent(user_text)
+        or any(cmd in lowered for cmd in FINALIZE_COMMANDS)
+    )
+    if is_card_stage and (turn_count == 0 or is_regen):
         text_id = str(uuid.uuid4())
         yield f'data: {json.dumps({"type": "text-start", "id": text_id})}\n\n'
 
-        preamble = stage.opening_prompt + "\n\n"
+        if is_regen:
+            preamble = "♻️ Regenerating your card with the latest information...\n\n"
+        else:
+            preamble = stage.opening_prompt + "\n\n"
         yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": preamble})}\n\n'
+
+        # Build additional context from post-generation edits + bulk extracted data
+        additional_parts: list[str] = []
+        if is_regen and user_text.strip():
+            additional_parts.append(f"User's latest update/request: {user_text}")
+        if bulk_extracted:
+            additional_parts.append(f"Bulk-extracted profile data: {json.dumps(bulk_extracted)}")
+        additional_context = "\n".join(additional_parts) if additional_parts else None
 
         try:
             yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": "Synthesizing your profile first...\\n\\n"})}\n\n'
-            synthesis_json = await _run_synthesis(client, settings, completed_summaries, current_stage_messages)
+            synthesis_json = await _run_synthesis(
+                client, settings, completed_summaries, current_stage_messages,
+                additional_context=additional_context,
+            )
 
             yield f'data: {json.dumps({"type": "text-delta", "id": text_id, "delta": "Generating your Skill Deck card...\\n\\n"})}\n\n'
             display_name = identity.name or "Anonymous"
@@ -1231,6 +1468,8 @@ async def process_stateless_turn(
                 display_name,
                 identity.photo_status,
                 clifton_strengths=clifton_strengths,
+                linkedin_skills=linkedin_skills,
+                github_skills=github_skills,
                 completed_summaries=completed_summaries,
                 role_text=identity.title or identity.role,
             )
@@ -1292,10 +1531,23 @@ async def process_stateless_turn(
     if turn_count >= FAST_STAGE_SOFT_TURN_LIMIT:
         context["context_summary"] += " Stage is near completion; summarize signal and suggest moving on."
 
+    # Post-card-generation: let the LLM know it can accept edits
+    if stage.id == "card_generation" and turn_count > 0:
+        context["context_summary"] += (
+            " A card has already been generated. The user may provide corrections or additions. "
+            "Acknowledge their update and tell them you'll incorporate it — "
+            "they can say 'regenerate' or 'generate again' to rebuild the card with the new info."
+        )
+
     system_prompt = render_template("interview_system", **context)
 
     # Build LLM message history
     history: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+
+    # Inject bulk-extracted profile context so the LLM avoids re-asking known info
+    if bulk_extracted:
+        bulk_ctx = _format_bulk_context(bulk_extracted)
+        history.append({"role": "system", "content": bulk_ctx})
 
     # Add context from completed stages
     context_msg = _build_context_message(completed_summaries)
@@ -1391,6 +1643,7 @@ async def process_stateless_turn(
         stage_summary=stage_summary,
         new_stage_opening=new_stage_opening,
         panel_data=panel,
+        bulk_extracted=bulk_extracted,
     )
     yield f'data: {json.dumps({"type": "data-stateUpdate", "data": state_update.to_dict()})}\n\n'
     yield "data: [DONE]\n\n"

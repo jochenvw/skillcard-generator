@@ -68,6 +68,13 @@ export function WelcomeBanner() {
               </span>
             </li>
             <li className="flex gap-2">
+              <span className="text-cyan-400 shrink-0">📋</span>
+              <span>
+                <span className="text-zinc-200">Paste your resume or profile text</span>{" "}
+                — we extract your skills, projects, and background automatically.
+              </span>
+            </li>
+            <li className="flex gap-2">
               <span className="text-violet-400 shrink-0">💬</span>
               <span>
                 <span className="text-zinc-200">Or just start talking</span>{" "}

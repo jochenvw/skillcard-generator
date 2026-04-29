@@ -42,6 +42,9 @@ class RegenerateRequest(BaseModel):
     identity: _Identity = Field(default_factory=_Identity)
     completedStageSummaries: list[_Stage] = Field(default_factory=list)
     cliftonStrengths: list[str] = Field(default_factory=list)
+    linkedin_skills: dict | None = None
+    github_skills: dict | None = None
+    bulk_extracted: dict | None = None
     photoBase64: str | None = None
     includeImage: bool = True
     style: _CardStyleBody | None = None
@@ -73,7 +76,16 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
 
     client = await _get_openai_client(settings)
     try:
-        synthesis_json = await _run_synthesis(client, settings, completed, [])
+        # Build additional context from bulk-extracted profile data
+        additional_context: str | None = None
+        if body.bulk_extracted:
+            import json as _json
+            additional_context = f"Bulk-extracted profile data: {_json.dumps(body.bulk_extracted)}"
+
+        synthesis_json = await _run_synthesis(
+            client, settings, completed, [],
+            additional_context=additional_context,
+        )
         card_data = await _run_card_generation(
             client,
             settings,
@@ -81,6 +93,8 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
             display_name,
             body.identity.photoStatus,
             clifton_strengths=body.cliftonStrengths,
+            linkedin_skills=body.linkedin_skills,
+            github_skills=body.github_skills,
             completed_summaries=completed,
             role_text=body.identity.title or body.identity.role,
         )
