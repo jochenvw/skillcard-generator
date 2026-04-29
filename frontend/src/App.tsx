@@ -136,6 +136,8 @@ export default function App() {
       const body = (await res.json()) as {
         cardData: CardData;
         cardImage?: { url?: string; base64?: string } | null;
+        cardImageError?: string;
+        cardImageRetryAfter?: number;
       };
       setCardData(body.cardData);
       updateSession({ cardData: body.cardData });
@@ -143,6 +145,13 @@ export default function App() {
         setCardImageSrc(body.cardImage.url);
       } else if (body.cardImage?.base64) {
         setCardImageSrc(`data:image/png;base64,${body.cardImage.base64}`);
+      } else if (body.cardImageError === "rate_limited") {
+        const wait = body.cardImageRetryAfter
+          ? `Please wait ~${body.cardImageRetryAfter}s and try again.`
+          : "Please wait a minute and try again.";
+        alert(`Image service is rate-limited right now. Card text was regenerated, but the portrait could not be created. ${wait}`);
+      } else if (body.cardImageError) {
+        alert("Image generation failed. Card text was regenerated. Try again in a moment.");
       }
     } catch (err) {
       console.error("Regenerate failed:", err);

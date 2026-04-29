@@ -113,7 +113,9 @@ async def demo_card_image_endpoint(
 
     image_result: dict | None = None
     try:
-        image_result = await _generate_card_image(None, settings, DEMO_CARD_DATA)
+        result = await _generate_card_image(None, settings, DEMO_CARD_DATA)
+        if result and "base64" in result:
+            image_result = result
     except Exception:
         logger.exception("demo card image generation failed")
 

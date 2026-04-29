@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-from openai import AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, RateLimitError
 
 from pydantic import ValidationError
 
@@ -1063,8 +1063,19 @@ async def _generate_card_image(
             return {"url": image_data.url}
         else:
             logger.warning("Card image response had no data")
+    except RateLimitError as rle:
+        retry_after = None
+        try:
+            ra = rle.response.headers.get("retry-after") if getattr(rle, "response", None) else None
+            if ra:
+                retry_after = int(float(ra))
+        except (ValueError, AttributeError, TypeError):
+            retry_after = None
+        logger.warning("Card image generation rate-limited (retry_after=%s): %s", retry_after, rle)
+        return {"error": "rate_limited", "retry_after": retry_after}
     except Exception as e:
         logger.error("Card image generation error: %s", e, exc_info=True)
+        return {"error": "failed", "message": str(e)}
     return None
 
 
@@ -1485,9 +1496,16 @@ async def process_stateless_turn(
             yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": "\\n\\n✨ Generating your AI card portrait..."})}\n\n'
             try:
                 image_result = await _generate_card_image(client, settings, card_data_result, photo_base64, style=style)
-                if image_result:
+                if image_result and "base64" in image_result:
                     yield f'data: {json.dumps({"type": "data-cardImage", "data": image_result})}\n\n'
                     yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": " Done!"})}\n\n'
+                elif image_result and image_result.get("error") == "rate_limited":
+                    ra = image_result.get("retry_after")
+                    wait_hint = f" Please wait ~{ra}s and use /regenerate to try again." if ra else " Please wait a minute and use /regenerate to try again."
+                    msg = f"\n\n⏳ The image service is rate-limited right now. Your card text is ready, but the portrait couldn't be generated.{wait_hint}"
+                    yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": msg})}\n\n'
+                elif image_result and image_result.get("error"):
+                    yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": " (image generation failed — use /regenerate to retry)"})}\n\n'
                 else:
                     yield f'data: {json.dumps({"type": "text-delta", "id": text_id + "-img", "delta": " (image generation unavailable)"})}\n\n'
             except Exception as img_err:

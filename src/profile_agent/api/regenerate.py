@@ -117,8 +117,15 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
                     accent_color=body.style.accentColor,
                 )
             img = await _generate_card_image(client, settings, card_data, photo_base64=body.photoBase64, style=style)
-            if img:
+            if img and "base64" in img:
                 response["cardImage"] = img
+            elif img and img.get("error") == "rate_limited":
+                ra = img.get("retry_after")
+                response["cardImageError"] = "rate_limited"
+                if ra:
+                    response["cardImageRetryAfter"] = ra
+            elif img and img.get("error"):
+                response["cardImageError"] = "failed"
         except Exception:
             logger.exception("Image regeneration failed")
             response["cardImageError"] = "image generation failed"
