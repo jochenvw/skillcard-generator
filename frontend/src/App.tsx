@@ -59,7 +59,24 @@ export default function App() {
   const [cardData, setCardData] = useState<CardData | null>(
     session?.cardData ?? null,
   );
-  const [cardImageSrc, setCardImageSrc] = useState<string | null>(null);
+  const [cardImageSrc, setCardImageSrcState] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return localStorage.getItem("skillcard-image") || null;
+    } catch {
+      return null;
+    }
+  });
+  const setCardImageSrc = useCallback((src: string | null) => {
+    setCardImageSrcState(src);
+    try {
+      if (src) localStorage.setItem("skillcard-image", src);
+      else localStorage.removeItem("skillcard-image");
+    } catch (err) {
+      // QuotaExceeded for very large data URLs — log but don't crash.
+      console.warn("Could not cache card image to localStorage:", err);
+    }
+  }, []);
   const [compacting, setCompacting] = useState(false);
 
   // Track whether the next send should include hasImage
@@ -158,7 +175,7 @@ export default function App() {
     } finally {
       setRegenerating(false);
     }
-  }, [session, regenerating, getAuthHeaders, updateSession]);
+  }, [session, regenerating, getAuthHeaders, updateSession, setCardImageSrc]);
 
   // Expose for quick manual triggering from devtools.
   useEffect(() => {
@@ -348,7 +365,7 @@ export default function App() {
         setIsStreaming(false);
       }
     },
-    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData, getAuthHeaders],
+    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData, getAuthHeaders, setCardImageSrc],
   );
 
   // ── Photo selected in ChatPanel ─────────────────────────────────────────
@@ -451,7 +468,7 @@ export default function App() {
       }
     };
     input.click();
-  }, [updateSession]);
+  }, [updateSession, setCardImageSrc]);
 
   // ── Reset session ───────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -460,7 +477,7 @@ export default function App() {
     setMessages([]);
     setCardData(null);
     setCardImageSrc(null);
-  }, [resetSession]);
+  }, [resetSession, setCardImageSrc]);
 
   // ── Customize-look handler ──────────────────────────────────────────────
   const handleCardStyleChange = useCallback(
