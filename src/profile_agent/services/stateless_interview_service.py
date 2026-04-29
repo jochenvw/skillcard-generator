@@ -780,24 +780,41 @@ async def _get_image_client(settings: Settings) -> AsyncAzureOpenAI:
     from urllib.parse import urlparse
     from profile_agent.config.settings import get_azure_credential
 
-    # Derive the services.ai endpoint from the Foundry project endpoint
-    host = urlparse(settings.foundry_project_endpoint).hostname or ""
-    resource_name = host.split(".")[0] if host else ""
-    endpoint = f"https://{resource_name}.services.ai.azure.com" if resource_name else ""
+    # Endpoint resolution:
+    #   1. explicit override (e.g. APIM gateway in front of the AI Services resource)
+    #   2. derive services.ai endpoint from the Foundry project endpoint
+    if settings.foundry_image_endpoint_override:
+        endpoint = settings.foundry_image_endpoint_override.rstrip("/")
+        endpoint_source = "override"
+    else:
+        host = urlparse(settings.foundry_project_endpoint).hostname or ""
+        resource_name = host.split(".")[0] if host else ""
+        endpoint = f"https://{resource_name}.services.ai.azure.com" if resource_name else ""
+        endpoint_source = "derived"
 
     if not endpoint:
         raise RuntimeError("Cannot derive image endpoint from Foundry project endpoint")
 
-    cred = await get_azure_credential(settings)
-    cred_type = type(cred).__name__
-    token_provider = get_bearer_token_provider(cred, "https://cognitiveservices.azure.com/.default")
-    _image_client = AsyncAzureOpenAI(
-        azure_endpoint=endpoint,
-        azure_ad_token_provider=token_provider,
-        api_version=settings.azure_openai_api_version,
-    )
-    logger.info("Image client initialized → %s (credential=%s, deployment=%s)",
-                endpoint, cred_type, settings.foundry_image_deployment_name)
+    # Auth: API key wins when paired with an override (typical APIM scenario);
+    # otherwise fall back to AAD bearer tokens.
+    if settings.foundry_image_api_key:
+        _image_client = AsyncAzureOpenAI(
+            azure_endpoint=endpoint,
+            api_key=settings.foundry_image_api_key,
+            api_version=settings.azure_openai_api_version,
+        )
+        auth_type = "api_key"
+    else:
+        cred = await get_azure_credential(settings)
+        auth_type = type(cred).__name__
+        token_provider = get_bearer_token_provider(cred, "https://cognitiveservices.azure.com/.default")
+        _image_client = AsyncAzureOpenAI(
+            azure_endpoint=endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version=settings.azure_openai_api_version,
+        )
+    logger.info("Image client initialized → %s (endpoint=%s, auth=%s, deployment=%s)",
+                endpoint, endpoint_source, auth_type, settings.foundry_image_deployment_name)
     return _image_client
 
 

@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     foundry_model_deployment_name: str = "gpt-5.4"
     foundry_image_deployment_name: str = "gpt-image-2-1"
     foundry_image_fallback_deployment_name: str = "gpt-image-1.5"
+    # Optional: route image generation through an APIM gateway (or any custom endpoint).
+    # When set, the image client uses this endpoint instead of the derived AI Services URL.
+    # If foundry_image_api_key is also set, API-key auth is used; otherwise AAD is used.
+    foundry_image_endpoint_override: str = ""
+    foundry_image_api_key: str = ""
 
     # Azure OpenAI direct/model endpoint settings
     azure_openai_endpoint: str = ""
