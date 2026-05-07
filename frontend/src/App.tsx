@@ -53,6 +53,7 @@ export default function App() {
     handleStateUpdate,
     resetSession,
     exportSession,
+    consumeFreshFlag,
   } = useLocalSession();
   const { user, getAuthHeaders, signOut } = useAuth();
   const toast = useToast();
@@ -146,6 +147,34 @@ export default function App() {
   useEffect(() => {
     startHeartbeat(() => sessionIdRef.current);
   }, []);
+
+  // ── Funnel telemetry ────────────────────────────────────────────────────
+  // session.started fires exactly once per fresh session creation (no prior
+  // localStorage). consumeFreshFlag() returns true only on the first call.
+  useEffect(() => {
+    if (!session) return;
+    if (consumeFreshFlag()) {
+      trackEvent("session.started", {
+        session_id: session.sessionId,
+        current_stage: session.currentStageId,
+      });
+    }
+  }, [session, consumeFreshFlag]);
+
+  // stage.entered fires on every distinct currentStageId we observe (initial
+  // load + each advance). Use a ref to dedupe so re-renders don't refire.
+  const lastStageRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!session) return;
+    const stageId = session.currentStageId;
+    if (lastStageRef.current === stageId) return;
+    lastStageRef.current = stageId;
+    trackEvent("stage.entered", {
+      session_id: session.sessionId,
+      stage_id: stageId,
+      completed_count: String(session.completedStages.length),
+    });
+  }, [session]);
 
   // ── /demo route — fetch a pre-baked persona + generated card image ──────
   const demoFetchedRef = useRef(false);
@@ -637,6 +666,20 @@ export default function App() {
             setImageStatus("idle");
             return;
           }
+          // stage.advanced — fire BEFORE handleStateUpdate so we still see the
+          // stage we're leaving (handleStateUpdate mutates currentStageId).
+          if (receivedStateUpdate.stageAdvanced && session) {
+            const fromStage = session.currentStageId;
+            const toStage = receivedStateUpdate.currentStageId;
+            const turnsInStage = session.currentStageMessages.length + 2; // +2 = the user/assistant pair we just exchanged
+            trackEvent("stage.advanced", {
+              session_id: session.sessionId,
+              from_stage: fromStage,
+              to_stage: toStage,
+              turn_count: String(turnsInStage),
+              completed_count: String(session.completedStages.length + 1),
+            });
+          }
           handleStateUpdate(receivedStateUpdate, assistantText, text);
 
           // End compaction indicator after stage advance settles
@@ -759,6 +802,20 @@ export default function App() {
     ]);
   }, []);
 
+  // ── Export session (instrumented wrapper) ───────────────────────────────
+  const handleExport = useCallback(() => {
+    if (session) {
+      trackEvent("session.exported", {
+        session_id: session.sessionId,
+        current_stage: session.currentStageId,
+        completed_count: String(session.completedStages.length),
+        has_card_data: String(Boolean(session.cardData)),
+        has_image: String(Boolean(cardImageSrc)),
+      });
+    }
+    exportSession();
+  }, [session, cardImageSrc, exportSession]);
+
   // ── Import session from JSON file ───────────────────────────────────────
   const handleImport = useCallback(() => {
     const input = document.createElement("input");
@@ -766,11 +823,18 @@ export default function App() {
     input.accept = ".json";
     input.onchange = async () => {
       const file = input.files?.[0];
-      if (!file) return;
+      if (!file) {
+        trackEvent("session.import_failed", { reason: "no_file" });
+        return;
+      }
       try {
         const raw = await file.text();
         const imported = JSON.parse(raw) as ClientSession;
         if (!imported.sessionId || !imported.currentStageId) {
+          trackEvent("session.import_failed", {
+            reason: "invalid_schema",
+            file_size: String(file.size),
+          });
           toast.error("Invalid session file.");
           return;
         }
@@ -784,7 +848,18 @@ export default function App() {
         clearImageTimeout();
         setImageStatus("idle");
         setImageError(null);
-      } catch {
+        trackEvent("session.imported", {
+          session_id: imported.sessionId,
+          current_stage: imported.currentStageId,
+          completed_count: String(imported.completedStages?.length ?? 0),
+          has_card_data: String(Boolean(imported.cardData)),
+          file_size: String(file.size),
+        });
+      } catch (e) {
+        trackEvent("session.import_failed", {
+          reason: "parse_error",
+          message: e instanceof Error ? e.message : String(e),
+        });
         toast.error("Failed to parse session file.");
       }
     };
@@ -794,6 +869,14 @@ export default function App() {
   // ── Reset session ───────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
     if (!confirm("Reset session? All interview progress will be lost.")) return;
+    if (session) {
+      trackEvent("session.reset", {
+        session_id: session.sessionId,
+        current_stage: session.currentStageId,
+        completed_count: String(session.completedStages.length),
+        had_card_data: String(Boolean(session.cardData)),
+      });
+    }
     resetSession();
     setMessages([]);
     setCardData(null);
@@ -801,7 +884,7 @@ export default function App() {
     clearImageTimeout();
     setImageStatus("idle");
     setImageError(null);
-  }, [resetSession, setCardImageSrc, clearImageTimeout]);
+  }, [session, resetSession, setCardImageSrc, clearImageTimeout]);
 
   // ── Customize-look handler ──────────────────────────────────────────────
   const handleCardStyleChange = useCallback(
@@ -882,7 +965,7 @@ export default function App() {
 
             {/* Export */}
             <button
-              onClick={exportSession}
+              onClick={handleExport}
               title="Export session"
               className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
             >

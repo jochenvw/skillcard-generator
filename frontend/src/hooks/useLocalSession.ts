@@ -33,32 +33,28 @@ function persist(session: ClientSession) {
 }
 
 export function useLocalSession() {
-  const [session, setSession] = useState<ClientSession | null>(() => {
+  // Tracks whether this hook initialized with a brand-new session (no prior
+  // localStorage). Stored in state alongside the session so we don't write a
+  // ref during render. Consumers call consumeFreshFlag() once on mount to
+  // fire `session.started` telemetry without re-firing on remount.
+  const [{ session: initialSession, wasFresh }] = useState<{
+    session: ClientSession;
+    wasFresh: boolean;
+  }>(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as ClientSession;
-        // Backfill fields added in later versions
-        if (!Array.isArray(parsed.cliftonStrengths)) {
-          parsed.cliftonStrengths = [];
-        }
-        // Backfill linkedin/github profile skills
+        if (!Array.isArray(parsed.cliftonStrengths)) parsed.cliftonStrengths = [];
         if (!parsed.linkedinSkills) parsed.linkedinSkills = null;
         if (!parsed.githubSkills) parsed.githubSkills = null;
-        // Backfill bulk extracted profile data
         if (parsed.bulkExtracted === undefined) parsed.bulkExtracted = null;
-        // Backfill identity.title added in later versions
         if (parsed.identity && parsed.identity.title === undefined) {
           parsed.identity = { ...parsed.identity, title: null };
         }
-        // Discard cardData persisted under the legacy gamey schema
-        // (top_stats / weaknesses / signature_ability / level / xp / rarity).
-        // It would crash the new SkillCard which expects strengths/inspirations/etc.
         if (parsed.cardData && !Array.isArray((parsed.cardData as { strengths?: unknown }).strengths)) {
           parsed.cardData = null;
         }
-        // Backfill style preferences for sessions persisted before the
-        // customization feature existed.
         if (!parsed.style || typeof parsed.style !== 'object') {
           parsed.style = { ...EMPTY_CARD_STYLE };
         } else {
@@ -68,17 +64,24 @@ export function useLocalSession() {
             accentColor: parsed.style.accentColor ?? null,
           };
         }
-        return parsed;
+        return { session: parsed, wasFresh: false };
       } catch {
         const fresh = createFreshSession();
         persist(fresh);
-        return fresh;
+        return { session: fresh, wasFresh: true };
       }
     }
     const fresh = createFreshSession();
     persist(fresh);
-    return fresh;
+    return { session: fresh, wasFresh: true };
   });
+  const [session, setSession] = useState<ClientSession | null>(initialSession);
+  const [freshFlag, setFreshFlag] = useState<boolean>(wasFresh);
+  const consumeFreshFlag = useCallback(() => {
+    if (!freshFlag) return false;
+    setFreshFlag(false);
+    return true;
+  }, [freshFlag]);
   const loading = session === null;
 
   const updateSession = useCallback((updates: Partial<ClientSession>) => {
@@ -152,5 +155,5 @@ export function useLocalSession() {
     URL.revokeObjectURL(url);
   }, [session]);
 
-  return { session, loading, updateSession, handleStateUpdate, resetSession, exportSession };
+  return { session, loading, updateSession, handleStateUpdate, resetSession, exportSession, consumeFreshFlag };
 }
