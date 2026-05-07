@@ -14,7 +14,8 @@ dependencies = [
     "azure-ai-inference>=1.0.0b1",
     # Azure identity & services
     "azure-identity>=1.19.0",
-    # Observability
+    # Observability — distro provides Live Metrics + auto-instrumentation
+    "azure-monitor-opentelemetry>=1.6.0",
     "azure-monitor-opentelemetry-exporter>=1.0.0b33",
     "opentelemetry-api>=1.29.0",
     "opentelemetry-sdk>=1.29.0",

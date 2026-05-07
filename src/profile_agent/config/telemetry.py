@@ -1,18 +1,19 @@
-"""OpenTelemetry setup — traces, metrics, and logs to Azure Monitor."""
+"""OpenTelemetry setup — traces, metrics, logs, and Live Metrics to Azure Monitor.
+
+Uses the azure-monitor-opentelemetry distro so Live Metrics (QuickPulse) is
+supported out of the box. The distro also installs a logging handler on the
+root logger that flows LogRecord extras to App Insights customDimensions, and
+auto-instruments FastAPI / httpx / requests / urllib3.
+"""
 
 from __future__ import annotations
 
 import logging
 
 from opentelemetry import metrics, trace
-from opentelemetry._logs import set_logger_provider
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ def configure_telemetry(
     service_name: str = "profile-agent",
     service_version: str = "0.1.0",
 ) -> None:
-    """Configure OpenTelemetry with Azure Monitor exporter.
+    """Configure OpenTelemetry with Azure Monitor + Live Metrics.
 
     Safe to call multiple times — subsequent calls are no-ops.
     """
@@ -40,35 +41,26 @@ def configure_telemetry(
 
     if connection_string:
         try:
-            from azure.monitor.opentelemetry.exporter import (
-                AzureMonitorLogExporter,
-                AzureMonitorMetricExporter,
-                AzureMonitorTraceExporter,
+            from azure.monitor.opentelemetry import configure_azure_monitor
+
+            # Distro wires up:
+            #   - traces  → AzureMonitorTraceExporter
+            #   - metrics → AzureMonitorMetricExporter (60s)
+            #   - logs    → AzureMonitorLogExporter + LoggingHandler on root logger
+            #   - live metrics (QuickPulse) when enable_live_metrics=True
+            #   - auto-instrumentation for fastapi, httpx, requests, urllib(3), psycopg, etc.
+            configure_azure_monitor(
+                connection_string=connection_string,
+                resource=resource,
+                enable_live_metrics=True,
+                logger_name="profile_agent",  # root logger for App Insights log flow
             )
-
-            # Traces
-            trace_exporter = AzureMonitorTraceExporter(connection_string=connection_string)
-            tracer_provider = TracerProvider(resource=resource)
-            tracer_provider.add_span_processor(BatchSpanProcessor(trace_exporter))
-            trace.set_tracer_provider(tracer_provider)
-
-            # Metrics
-            metric_exporter = AzureMonitorMetricExporter(connection_string=connection_string)
-            metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
-            meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-            metrics.set_meter_provider(meter_provider)
-
-            # Logs — bridge stdlib logging to Azure Monitor
-            log_exporter = AzureMonitorLogExporter(connection_string=connection_string)
-            logger_provider = LoggerProvider(resource=resource)
-            logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
-            set_logger_provider(logger_provider)
-            otel_handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
-            logging.getLogger().addHandler(otel_handler)
-
-            logger.info("Telemetry configured with Azure Monitor (traces, metrics, logs)")
+            logger.info("Telemetry configured with Azure Monitor distro (traces, metrics, logs, Live Metrics)")
         except ImportError:
-            logger.warning("azure-monitor-opentelemetry-exporter not installed — telemetry disabled")
+            logger.warning("azure-monitor-opentelemetry distro not installed — telemetry disabled")
+            _setup_noop_providers(resource)
+        except Exception as e:  # noqa: BLE001 — telemetry must never break the app
+            logger.warning("Telemetry setup failed (%s: %s) — falling back to noop", type(e).__name__, e)
             _setup_noop_providers(resource)
     else:
         logger.info("No Application Insights connection string — telemetry in console-only mode")
@@ -78,20 +70,15 @@ def configure_telemetry(
 
 
 def instrument_app(app) -> None:  # noqa: ANN001 — FastAPI app type avoided to keep import light
-    """Enable FastAPI + httpx auto-instrumentation. Idempotent."""
+    """No-op when the distro is in use (it auto-instruments at configure time).
+
+    Kept for backward compatibility with callers that still invoke it.
+    """
     global _app_instrumented
     if _app_instrumented:
         return
-    try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-
-        FastAPIInstrumentor.instrument_app(app)
-        HTTPXClientInstrumentor().instrument()
-        _app_instrumented = True
-        logger.info("FastAPI + httpx auto-instrumentation enabled")
-    except Exception as e:  # noqa: BLE001 — instrumentation must never break the app
-        logger.warning("Auto-instrumentation skipped: %s", e)
+    _app_instrumented = True
+    logger.debug("instrument_app() — distro auto-instrumentation already active")
 
 
 def _setup_noop_providers(resource: Resource) -> None:
@@ -148,3 +135,4 @@ session_counter = _meter.create_counter(
     "interview.sessions_created",
     description="Total sessions created",
 )
+
