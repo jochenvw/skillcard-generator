@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
@@ -1024,37 +1025,92 @@ async def _attempt_image_generation(
 ) -> dict | None:
     """Single attempt against one deployment. Raises on failure so the caller can fall back."""
     import io
+    from profile_agent.config.events import wide_event
 
-    if photo_bytes:
-        logger.info("Generating card image with reference photo (%d bytes) deployment=%s",
-                    len(photo_bytes), deployment)
-        buf = io.BytesIO(photo_bytes)
-        buf.name = "photo.png"
-        response = await image_client.images.edit(
-            model=deployment,
-            image=buf,
-            prompt=prompt,
+    mode = "edit" if photo_bytes else "generate"
+    photo_size = len(photo_bytes) if photo_bytes else 0
+    t0 = time.perf_counter()
+    wide_event(
+        "image.attempt.started",
+        deployment=deployment,
+        mode=mode,
+        size=size,
+        photo_bytes=photo_size,
+        prompt_chars=len(prompt),
+    )
+    try:
+        if photo_bytes:
+            logger.info("Generating card image with reference photo (%d bytes) deployment=%s",
+                        photo_size, deployment)
+            buf = io.BytesIO(photo_bytes)
+            buf.name = "photo.png"
+            response = await image_client.images.edit(
+                model=deployment,
+                image=buf,
+                prompt=prompt,
+                size=size,
+                n=1,
+            )
+        else:
+            logger.info("Generating card image without reference photo deployment=%s", deployment)
+            response = await image_client.images.generate(
+                model=deployment,
+                prompt=prompt,
+                size=size,
+                n=1,
+            )
+    except Exception as exc:
+        wide_event(
+            "image.attempt.completed",
+            outcome="error",
+            level=logging.WARNING,
+            deployment=deployment,
+            mode=mode,
             size=size,
-            n=1,
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+            error_type=type(exc).__name__,
+            error_message=str(exc)[:500],
         )
-    else:
-        logger.info("Generating card image without reference photo deployment=%s", deployment)
-        response = await image_client.images.generate(
-            model=deployment,
-            prompt=prompt,
-            size=size,
-            n=1,
-        )
+        raise
 
+    duration_ms = int((time.perf_counter() - t0) * 1000)
     image_data = response.data[0]
     if getattr(image_data, "b64_json", None):
-        logger.info("Card image generated successfully (base64, %d chars) deployment=%s",
-                    len(image_data.b64_json), deployment)
+        logger.info("Card image generated successfully (base64, %d chars) deployment=%s in %dms",
+                    len(image_data.b64_json), deployment, duration_ms)
+        wide_event(
+            "image.attempt.completed",
+            outcome="ok",
+            deployment=deployment,
+            mode=mode,
+            size=size,
+            duration_ms=duration_ms,
+            response_kind="base64",
+            response_bytes=len(image_data.b64_json),
+        )
         return {"base64": image_data.b64_json}
     if image_data.url:
-        logger.info("Card image generated successfully (url) deployment=%s", deployment)
+        logger.info("Card image generated successfully (url) deployment=%s in %dms", deployment, duration_ms)
+        wide_event(
+            "image.attempt.completed",
+            outcome="ok",
+            deployment=deployment,
+            mode=mode,
+            size=size,
+            duration_ms=duration_ms,
+            response_kind="url",
+        )
         return {"url": image_data.url}
     logger.warning("Card image response had no data deployment=%s", deployment)
+    wide_event(
+        "image.attempt.completed",
+        outcome="empty",
+        level=logging.WARNING,
+        deployment=deployment,
+        mode=mode,
+        size=size,
+        duration_ms=duration_ms,
+    )
     return None
 
 
@@ -1067,8 +1123,13 @@ async def _generate_card_image(
 ) -> dict | None:
     """Generate a full trading card image using gpt-image-2, falling back to gpt-image-1."""
     import base64 as b64mod
+    from profile_agent.config.events import wide_event
 
     prompt = _build_card_image_prompt(card_data, style)
+    t0 = time.perf_counter()
+    primary_ms = 0
+    fallback_ms = 0
+    used_deployment: str | None = None
 
     try:
         image_client = await _get_image_client(settings)
@@ -1092,19 +1153,44 @@ async def _generate_card_image(
         from profile_agent.services import image_cache
         cached = image_cache.get(prompt, photo_bytes, primary, size)
         if cached:
+            wide_event(
+                "image.generation.completed",
+                outcome="ok",
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                cache_hit=True,
+                used_deployment="cache",
+                primary_deployment=primary,
+                fallback_deployment=fallback,
+                has_photo=bool(photo_bytes),
+            )
             return {"base64": cached}
 
         rate_limit_info: dict | None = None
         primary_error: Exception | None = None
 
         # ── Primary attempt ──
+        primary_t = time.perf_counter()
         try:
             result = await _attempt_image_generation(image_client, primary, prompt, photo_bytes, size)
+            primary_ms = int((time.perf_counter() - primary_t) * 1000)
             if result and "base64" in result:
                 image_cache.put(prompt, photo_bytes, primary, size, result["base64"])
             if result:
+                used_deployment = primary
+                wide_event(
+                    "image.generation.completed",
+                    outcome="ok",
+                    duration_ms=int((time.perf_counter() - t0) * 1000),
+                    cache_hit=False,
+                    used_deployment=used_deployment,
+                    primary_deployment=primary,
+                    fallback_deployment=fallback,
+                    primary_ms=primary_ms,
+                    has_photo=bool(photo_bytes),
+                )
                 return result
         except RateLimitError as rle:
+            primary_ms = int((time.perf_counter() - primary_t) * 1000)
             retry_after = None
             try:
                 ra = rle.response.headers.get("retry-after") if getattr(rle, "response", None) else None
@@ -1116,20 +1202,37 @@ async def _generate_card_image(
                            primary, retry_after, fallback)
             rate_limit_info = {"error": "rate_limited", "retry_after": retry_after}
         except Exception as e:
+            primary_ms = int((time.perf_counter() - primary_t) * 1000)
             logger.warning("Primary image deployment %s failed (%s: %s) — trying fallback %s",
                            primary, type(e).__name__, e, fallback)
             primary_error = e
 
         # ── Fallback attempt ──
         if fallback and fallback != primary:
+            fallback_t = time.perf_counter()
             try:
                 result = await _attempt_image_generation(image_client, fallback, prompt, photo_bytes, size)
+                fallback_ms = int((time.perf_counter() - fallback_t) * 1000)
                 if result and "base64" in result:
                     image_cache.put(prompt, photo_bytes, primary, size, result["base64"])
                 if result:
+                    used_deployment = fallback
                     logger.info("Card image succeeded via fallback deployment %s", fallback)
+                    wide_event(
+                        "image.generation.completed",
+                        outcome="ok_fallback",
+                        duration_ms=int((time.perf_counter() - t0) * 1000),
+                        cache_hit=False,
+                        used_deployment=used_deployment,
+                        primary_deployment=primary,
+                        fallback_deployment=fallback,
+                        primary_ms=primary_ms,
+                        fallback_ms=fallback_ms,
+                        has_photo=bool(photo_bytes),
+                    )
                     return result
             except RateLimitError as rle2:
+                fallback_ms = int((time.perf_counter() - fallback_t) * 1000)
                 retry_after = None
                 try:
                     ra = rle2.response.headers.get("retry-after") if getattr(rle2, "response", None) else None
@@ -1145,16 +1248,52 @@ async def _generate_card_image(
                 elif retry_after and (not rate_limit_info.get("retry_after") or retry_after < rate_limit_info["retry_after"]):
                     rate_limit_info["retry_after"] = retry_after
             except Exception as e2:
+                fallback_ms = int((time.perf_counter() - fallback_t) * 1000)
                 logger.error("Fallback image deployment %s failed: %s", fallback, e2, exc_info=True)
                 if primary_error is None:
                     primary_error = e2
 
         if rate_limit_info is not None:
+            wide_event(
+                "image.generation.completed",
+                outcome="rate_limited",
+                level=logging.WARNING,
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                cache_hit=False,
+                primary_deployment=primary,
+                fallback_deployment=fallback,
+                primary_ms=primary_ms,
+                fallback_ms=fallback_ms,
+                retry_after=rate_limit_info.get("retry_after"),
+                has_photo=bool(photo_bytes),
+            )
             return rate_limit_info
         if primary_error is not None:
+            wide_event(
+                "image.generation.completed",
+                outcome="failed",
+                level=logging.ERROR,
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                cache_hit=False,
+                primary_deployment=primary,
+                fallback_deployment=fallback,
+                primary_ms=primary_ms,
+                fallback_ms=fallback_ms,
+                error_type=type(primary_error).__name__,
+                error_message=str(primary_error)[:500],
+                has_photo=bool(photo_bytes),
+            )
             return {"error": "failed", "message": str(primary_error)}
     except Exception as e:
         logger.error("Card image generation error: %s", e, exc_info=True)
+        wide_event(
+            "image.generation.completed",
+            outcome="error",
+            level=logging.ERROR,
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+            error_type=type(e).__name__,
+            error_message=str(e)[:500],
+        )
         return {"error": "failed", "message": str(e)}
     return None
 
