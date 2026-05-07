@@ -44,13 +44,6 @@ uv run --extra dev python -m pytest tests/ -v
 cd frontend && npm run lint && npm run build
 ```
 
-## Docs
-
-| | |
-|-|-|
-| [Architecture](docs/ARCHITECTURE.md) | Project structure, interview flow, SSE protocol, config reference |
-| [Deployment](docs/DEPLOYMENT.md) | Azure infra provisioning, Bicep, Container Apps, CI/CD setup |
-
 ## License
 
 MIT — see [LICENSE](LICENSE).

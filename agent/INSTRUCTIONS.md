@@ -29,9 +29,11 @@ Required:
 - Microsoft Entra ID authentication for the web app
 - modern ChatGPT-like open-source web UI library re-used rather than building raw HTML from scratch
 
-Preferred UI choice:
-- Use Chainlit as the web-based chat UI because it is Python-native, chat-oriented, and can be adapted for a ChatGPT-like experience with Entra ID authentication.
-- If Chainlit integration becomes too constraining for Entra auth + custom file upload + polished UX, create a small custom FastAPI backend plus Chainlit frontend integration layer, but still reuse Chainlit as much as possible.
+UI Implementation:
+- React 19 frontend with TypeScript, Vite, and Tailwind CSS v4
+- Uses Vercel AI SDK (@ai-sdk/react) for streaming chat and state management
+- FastAPI backend with Server-Sent Events (SSE) for real-time chat streaming
+- Implements the Vercel AI SDK Data Stream Protocol for chat synchronization
 
 Azure hosting preference:
 - Azure Container Apps for app hosting
@@ -117,23 +119,28 @@ Build a clean, maintainable project with these layers:
   - summarization_policy
   - profile_mapping_rules
 
-3. Memory/state layer
-Persist by session_id:
-- current stage
-- raw transcript
-- stage summaries
-- extracted facts
-- inferred profile signals
-- skills matrix
+3. State layer (stateless server, client-side persistence)
+The backend is STATELESS. There is no server-side session store.
+All session state is passed per-request in the SSE chat API and persisted on the client.
+
+The frontend is a Progressive Web App (PWA). The frontend stores all user data in browser local storage:
+- current stage and conversation transcript
+- stage summaries and extracted facts
+- inferred profile signals and skills matrix
 - user confirmation checkpoints
-- uploaded image metadata/blob references
-- generated card metadata/blob references
+- uploaded profile picture (as base64 / object URL in localStorage)
+- generated card image (as base64 / object URL in localStorage)
+- generated PDF artifacts
 - audit timestamps
 
-Implement pluggable persistence:
-- default local SQLite
-- Azure production store (Cosmos DB or Azure SQL; choose the one that fits best and justify in README)
-- Blob Storage for binary assets
+Rationale:
+- Privacy by default: the app does not store user data server-side
+- Simpler operations: no DB to manage in the hot path
+- Resumability via the browser only
+
+Server-side persistence is limited to:
+- ephemeral image cache for generated card assets (optional, transient)
+- application telemetry (no PII beyond what is needed for tracing)
 
 4. Compression/summarization layer
 Implement guided compression, not generic summarization.
@@ -205,27 +212,27 @@ Build a web-based UI that feels modern and chat-centric.
 
 Requirements:
 - ChatGPT-like conversational UX
-- user can authenticate with Microsoft Entra ID
-- user can start/resume sessions
-- user can upload a profile picture
+- user can authenticate with Microsoft Entra ID (production)
+- user can start/resume sessions (state persisted in browser localStorage)
+- user can upload a profile picture (stored client-side, sent per-request when needed)
 - user can see current stage/progress
 - user can review and confirm stage summaries
 - user can view final profile summary
-- user can view/download final card image
+- user can view/download final card image and PDF
 
-Preferred implementation:
-- reuse Chainlit as the chat UI foundation
-- wrap/adapt it to support:
-  - Entra authentication
-  - session persistence
-  - file upload to Blob
-  - current-stage indicator
-  - final artifact display
-
-If needed:
-- add a thin FastAPI layer for auth/session/blob APIs
-- use reverse proxy or middleware as appropriate
-- keep architecture simple enough to run in Azure Container Apps
+Implementation:
+- React 19 + TypeScript + Vite + Tailwind CSS v4
+- Vercel AI SDK (@ai-sdk/react) for chat streaming and message state
+- Server-Sent Events (SSE) consumed via the AI SDK Data Stream Protocol
+- Progressive Web App (PWA) — installable, offline-capable for viewing past sessions
+- ALL user data lives in browser localStorage (via a `useLocalSession` hook or equivalent)
+  - conversation transcript
+  - extracted profile and skills matrix
+  - uploaded profile picture
+  - generated card image
+  - generated PDF
+- No server-side session storage. The server receives the relevant slice of state per request.
+- Frontend is built (Vite) and served as static assets by the FastAPI backend in production
 
 ==================================================
 AZURE INFRASTRUCTURE
@@ -240,16 +247,17 @@ Provision at minimum:
 - Azure Container Registry
 - Log Analytics Workspace
 - Application Insights
-- Azure Storage Account with Blob containers
+- Azure Storage Account (optional, only for transient image cache — NOT for user session data)
 - Key Vault
 - Managed Identity / User Assigned Managed Identity if useful
-- Cosmos DB or Azure SQL for session/profile persistence
 - Microsoft Foundry / Azure AI project resources or the required Foundry-compatible Azure resources as far as can reasonably be automated
 - role assignments for managed identity access to:
-  - Blob Storage
+  - Blob Storage (if used for image cache)
   - App Insights/monitoring as needed
   - Key Vault secrets
   - Foundry/Azure AI resources as needed
+
+Note: No Cosmos DB / Azure SQL is provisioned for session persistence — sessions live in the browser (localStorage). This reflects the stateless-server architecture.
 
 Also provide:
 - parameters files for dev/test/prod
@@ -332,20 +340,32 @@ Create a clean structure similar to:
 │  ├─ publish_to_foundry.py
 │  ├─ seed_local_data.py
 │  ├─ create_app_reg_notes.md
-│  └─ dev_run.sh
+│  ├─ dev_run.sh
+│  └─ dev.ps1
+├─ frontend/
+│  ├─ src/
+│  │  ├─ components/
+│  │  ├─ hooks/
+│  │  ├─ types/
+│  │  ├─ App.tsx
+│  │  ├─ main.tsx
+│  │  ├─ index.css
+│  │  └─ __tests__/
+│  ├─ index.html
+│  ├─ package.json
+│  ├─ tsconfig.json
+│  ├─ vite.config.ts
+│  ├─ tailwind.config.js
+│  └─ eslint.config.js
 ├─ src/
 │  └─ profile_agent/
 │     ├─ app.py
 │     ├─ api/
-│     │  ├─ fastapi_app.py
+│     │  ├─ chat.py
 │     │  ├─ auth.py
 │     │  ├─ sessions.py
 │     │  ├─ uploads.py
 │     │  └─ health.py
-│     ├─ ui/
-│     │  ├─ chainlit_app.py
-│     │  ├─ adapters/
-│     │  └─ components/
 │     ├─ config/
 │     │  ├─ settings.py
 │     │  ├─ logging.py
@@ -538,17 +558,15 @@ Support:
 
 README must explain:
 - how to bootstrap with uv
-- how to run locally
-- how to run Chainlit/FastAPI locally
+- how to run locally (FastAPI backend + Vite frontend)
 - how to configure Entra auth
 - how to deploy infra with Bicep
 - how to deploy app container
 - how to publish/register/deploy the agent to the new Microsoft Foundry
-- how to configure Blob Storage
-- how the session persistence works
+- how the client-side session persistence works (localStorage, PWA)
 - how to add/edit stages
 - how telemetry is emitted and queried
-- how final card generation works
+- how final card and PDF generation works
 
 ==================================================
 QUALITY BAR
@@ -564,6 +582,17 @@ Prioritize:
 - realistic Azure patterns
 - observability by default
 - well-factored infrastructure code
+
+Python code style (non-negotiable):
+- Idiomatic Python — follow the Zen of Python (`import this`)
+- Simple is better than complex; flat is better than nested
+- Prefer the standard library and small, focused functions over heavy abstractions
+- Use Pydantic v2 for data contracts (model_validate, model_dump, ConfigDict — not v1 patterns)
+- Use type hints everywhere; let `ruff` enforce style (no manual style nits in review)
+- Avoid speculative generality — do not introduce factories, registries, or plugin layers until a second concrete use case exists
+- Async only where it pays off (I/O); do not wrap CPU-bound code in async
+- Errors are values to be handled explicitly at the boundary; never swallow exceptions silently
+- Readable > clever — if a junior engineer would struggle, simplify
 
 Add TODO comments only where genuinely necessary, especially for:
 - specific Foundry SDK publish nuances that may evolve
