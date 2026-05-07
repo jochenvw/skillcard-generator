@@ -10,6 +10,7 @@ import { EMPTY_CARD_STYLE } from "./types";
 import type { StrengthsResponse } from "./utils/strengthsClient";
 import { createLogger } from "./utils/logger";
 import { apiFetch, trackEvent } from "./utils/telemetry";
+import { useToast } from "./components/Toast";
 
 const log = createLogger("app");
 
@@ -54,6 +55,7 @@ export default function App() {
     exportSession,
   } = useLocalSession();
   const { user, getAuthHeaders, signOut } = useAuth();
+  const toast = useToast();
 
   // Display messages — seeded from currentStageMessages on first render
   const [messages, setMessages] = useState<UIMessage[]>(() =>
@@ -223,13 +225,18 @@ export default function App() {
         const err = new Error(`POST /api/regenerate failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
         log.error("Regenerate request failed", err, { status: res.status, detail });
         if (res.status === 504 || res.status === 502 || res.status === 503) {
-          alert(
-            "The server took too long to respond (gateway timeout). " +
-            "This sometimes happens on a cold start or when image generation is slow. " +
-            "Please wait ~30 seconds and try again.",
+          toast.error(
+            "The server took too long to respond. This sometimes happens on a cold start or when image generation is slow.",
+            {
+              title: "Gateway timeout",
+              action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+            },
           );
         } else {
-          alert(`Regeneration failed (HTTP ${res.status}). Please try again in a moment.`);
+          toast.error(`Regeneration failed (HTTP ${res.status}).`, {
+            title: "Regeneration failed",
+            action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+          });
         }
         throw err;
       }
@@ -270,11 +277,16 @@ export default function App() {
           ? `Please wait ~${body.cardImageRetryAfter}s and try again.`
           : "Please wait a minute and try again.";
         finishImageGeneration("error", `Image service is rate-limited. ${wait}`);
-        alert(`Image service is rate-limited right now. Card text was regenerated, but the portrait could not be created. ${wait}`);
+        toast.warning(`Card text was regenerated, but the portrait service is rate-limited. ${wait}`, {
+          title: "Image service rate-limited",
+        });
       } else if (body.cardImageError) {
         log.warn("regenerate image failed", { error: body.cardImageError });
         finishImageGeneration("error", "Image generation failed. Try regenerating again.");
-        alert("Image generation failed. Card text was regenerated. Try again in a moment.");
+        toast.warning("Card text was regenerated, but the portrait could not be created.", {
+          title: "Portrait generation failed",
+          action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+        });
       } else {
         // Card text came back but no image and no explicit error — treat as failure.
         finishImageGeneration("error", "Portrait was not produced. Try regenerating.");
@@ -282,17 +294,22 @@ export default function App() {
     } catch (err) {
       log.error("Regenerate failed", err);
       finishImageGeneration("error", err instanceof Error ? err.message : "Regeneration failed");
-      // If we haven't already alerted (i.e. this was a non-HTTP error like network failure), notify the user.
+      // If we haven't already toasted (i.e. this was a non-HTTP error like network failure), notify the user.
       if (err instanceof Error && !err.message.startsWith("POST /api/regenerate failed")) {
-        alert(`Could not regenerate: ${err.message}. Check your connection and try again.`);
+        toast.error(`Could not regenerate: ${err.message}`, {
+          title: "Network error",
+          action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+        });
       }
     } finally {
       setRegenerating(false);
     }
-  }, [session, regenerating, getAuthHeaders, updateSession, setCardImageSrc, startImageGeneration, finishImageGeneration]);
+  }, [session, regenerating, getAuthHeaders, updateSession, setCardImageSrc, startImageGeneration, finishImageGeneration, toast]);
 
   // Expose for quick manual triggering from devtools.
+  const regenerateCardRef = useRef<(() => void) | null>(null);
   useEffect(() => {
+    regenerateCardRef.current = regenerateCard;
     (window as unknown as { regenerateCard?: () => void }).regenerateCard = regenerateCard;
   }, [regenerateCard]);
 
@@ -587,7 +604,7 @@ export default function App() {
         const raw = await file.text();
         const imported = JSON.parse(raw) as ClientSession;
         if (!imported.sessionId || !imported.currentStageId) {
-          alert("Invalid session file.");
+          toast.error("Invalid session file.");
           return;
         }
         if (!Array.isArray(imported.cliftonStrengths)) {
@@ -601,11 +618,11 @@ export default function App() {
         setImageStatus("idle");
         setImageError(null);
       } catch {
-        alert("Failed to parse session file.");
+        toast.error("Failed to parse session file.");
       }
     };
     input.click();
-  }, [updateSession, setCardImageSrc, clearImageTimeout]);
+  }, [updateSession, setCardImageSrc, clearImageTimeout, toast]);
 
   // ── Reset session ───────────────────────────────────────────────────────
   const handleReset = useCallback(() => {

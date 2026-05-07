@@ -12,6 +12,7 @@ import { extractPdfText } from "../utils/pdfExtract";
 import { extractStrengths, type StrengthsResponse } from "../utils/strengthsClient";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 import { createLogger } from "../utils/logger";
+import { useToast } from "./Toast";
 
 const log = createLogger("chat-panel");
 
@@ -85,6 +86,7 @@ export function ChatPanel({
   onCardStyleChange,
 }: ChatPanelProps) {
   const [input, setInputRaw] = useState("");
+  const toast = useToast();
   const [pendingImage, setPendingImage] = useState<File | null>(null);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
@@ -202,11 +204,11 @@ export function ChatPanel({
     if (!file) return;
     const allowed = ["image/jpeg", "image/png", "image/webp"];
     if (!allowed.includes(file.type)) {
-      alert("Please select a JPEG, PNG, or WebP image.");
+      toast.error("Please select a JPEG, PNG, or WebP image.");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      alert("Image must be under 5 MB.");
+      toast.error("Image must be under 5 MB.");
       return;
     }
     setPendingImage(file);
@@ -220,22 +222,22 @@ export function ChatPanel({
     reader.readAsDataURL(file);
 
     e.target.value = "";
-  }, [onPhotoSelected]);
+  }, [onPhotoSelected, toast]);
 
   const handlePdfSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     if (file.type !== "application/pdf") {
-      alert("Please select a PDF file.");
+      toast.error("Please select a PDF file.");
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
-      alert("PDF must be under 10 MB.");
+      toast.error("PDF must be under 10 MB.");
       return;
     }
     if (!getAuthHeaders) {
-      alert("Authentication is not available.");
+      toast.error("Authentication is not available.");
       return;
     }
 
@@ -261,7 +263,7 @@ export function ChatPanel({
     } finally {
       setPdfProcessing(false);
     }
-  }, [getAuthHeaders, onPdfProcessingStart, onPdfStrengths, onPdfError]);
+  }, [getAuthHeaders, onPdfProcessingStart, onPdfStrengths, onPdfError, toast]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Navigate slash command menu

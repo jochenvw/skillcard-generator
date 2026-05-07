@@ -9,6 +9,7 @@ import { MsalProvider, MsalAuthenticationTemplate } from "@azure/msal-react";
 import "./index.css";
 import App from "./App.tsx";
 import { MsalAuthBridge, NoAuthProvider } from "./auth/AuthContext.tsx";
+import { ToastProvider } from "./components/Toast";
 import { createLogger, setTelemetrySink } from "./utils/logger";
 import { initTelemetry, trackException, trackTrace } from "./utils/telemetry";
 
@@ -58,25 +59,29 @@ async function bootstrap() {
 
     root.render(
       <StrictMode>
-        <MsalProvider instance={pca}>
-          <MsalAuthenticationTemplate
-            interactionType={InteractionType.Redirect}
-            authenticationRequest={{ scopes: apiScopes }}
-          >
-            <MsalAuthBridge apiScopes={apiScopes}>
-              <App />
-            </MsalAuthBridge>
-          </MsalAuthenticationTemplate>
-        </MsalProvider>
+        <ToastProvider>
+          <MsalProvider instance={pca}>
+            <MsalAuthenticationTemplate
+              interactionType={InteractionType.Redirect}
+              authenticationRequest={{ scopes: apiScopes }}
+            >
+              <MsalAuthBridge apiScopes={apiScopes}>
+                <App />
+              </MsalAuthBridge>
+            </MsalAuthenticationTemplate>
+          </MsalProvider>
+        </ToastProvider>
       </StrictMode>,
     );
   } else {
     // Auth not configured — render without protection (local dev)
     root.render(
       <StrictMode>
-        <NoAuthProvider>
-          <App />
-        </NoAuthProvider>
+        <ToastProvider>
+          <NoAuthProvider>
+            <App />
+          </NoAuthProvider>
+        </ToastProvider>
       </StrictMode>,
     );
   }
