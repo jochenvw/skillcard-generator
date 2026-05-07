@@ -34,8 +34,20 @@ def create_fastapi_app() -> FastAPI:
         allow_origins=settings.cors_origins if hasattr(settings, "cors_origins") else ["*"],
         allow_credentials=True,
         allow_methods=["*"],
-        allow_headers=["*"],
+        allow_headers=[
+            "*",
+            "X-Request-Id",
+            "X-Session-Id",
+            "X-Client-Id",
+            "traceparent",
+            "tracestate",
+        ],
+        expose_headers=["X-Request-Id"],
     )
+
+    # Per-request context (request_id, session_id, client_id)
+    from profile_agent.api.middleware import RequestContextMiddleware
+    app.add_middleware(RequestContextMiddleware)
 
     # Health / readiness
     from profile_agent.api.health import router as health_router

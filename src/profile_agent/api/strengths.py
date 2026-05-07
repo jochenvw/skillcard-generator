@@ -40,24 +40,18 @@ async def extract_strengths_endpoint(
     if len(body.text) > _MAX_TEXT_LEN:
         raise HTTPException(status_code=413, detail="text exceeds maximum allowed length")
 
-    logger.info(
-        "POST /api/extract-strengths | user=%s text_len=%d",
-        user.get("name", "anon"),
-        len(text),
-    )
+    from profile_agent.config.context import hash_user_id, user_id_var
+    from profile_agent.config.events import timed_event
+    user_id_var.set(hash_user_id(user.get("user_id") or user.get("email", "")))
 
-    try:
-        result = await extract_strengths(text)
-    except StrengthsExtractionError:
-        logger.exception("strengths extraction failed | text_len=%d", len(text))
-        raise HTTPException(status_code=500, detail="Failed to extract strengths") from None
-    except Exception:
-        logger.exception("unexpected error in strengths extraction | text_len=%d", len(text))
-        raise HTTPException(status_code=500, detail="Failed to extract strengths") from None
-
-    logger.info(
-        "POST /api/extract-strengths success | text_len=%d strengths_count=%d",
-        len(text),
-        len(result.get("strengths", [])),
-    )
-    return result
+    with timed_event("extract_strengths.completed", text_len=len(text)) as ev:
+        try:
+            result = await extract_strengths(text)
+        except StrengthsExtractionError:
+            logger.exception("strengths extraction failed | text_len=%d", len(text))
+            raise HTTPException(status_code=500, detail="Failed to extract strengths") from None
+        except Exception:
+            logger.exception("unexpected error in strengths extraction | text_len=%d", len(text))
+            raise HTTPException(status_code=500, detail="Failed to extract strengths") from None
+        ev["strengths_count"] = len(result.get("strengths", []))
+        return result

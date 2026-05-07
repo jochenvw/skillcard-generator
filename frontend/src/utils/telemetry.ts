@@ -13,6 +13,7 @@
 import { ApplicationInsights } from "@microsoft/applicationinsights-web";
 import { ReactPlugin } from "@microsoft/applicationinsights-react-js";
 
+import { getClientId } from "./clientId";
 import { createLogger } from "./logger";
 
 const log = createLogger("telemetry");
@@ -21,6 +22,9 @@ export const reactPlugin = new ReactPlugin();
 
 let appInsights: ApplicationInsights | null = null;
 let initialized = false;
+let buildShaCache = "";
+let buildTagCache = "";
+let environmentCache = "dev";
 
 export function getAppInsights(): ApplicationInsights | null {
   return appInsights;
@@ -29,17 +33,18 @@ export function getAppInsights(): ApplicationInsights | null {
 export async function initTelemetry(buildSha?: string, buildTag?: string): Promise<void> {
   if (initialized) return;
   initialized = true;
+  buildShaCache = buildSha ?? "";
+  buildTagCache = buildTag ?? "";
 
   let connectionString = "";
   let roleName = "profile-agent-frontend";
-  let environment = "dev";
   try {
     const res = await fetch("/api/telemetry/config");
     if (res.ok) {
       const cfg = await res.json();
       connectionString = cfg.connectionString ?? "";
       roleName = cfg.roleName ?? roleName;
-      environment = cfg.environment ?? environment;
+      environmentCache = cfg.environment ?? environmentCache;
     }
   } catch (e) {
     log.warn("could not fetch telemetry config", e);
@@ -56,33 +61,64 @@ export async function initTelemetry(buildSha?: string, buildTag?: string): Promi
       config: {
         connectionString,
         extensions: [reactPlugin],
-        enableAutoRouteTracking: true,
+        // Chat-style SPA — no client-side routes worth tracking. We emit explicit custom events.
+        enableAutoRouteTracking: false,
         autoTrackPageVisitTime: true,
         disableFetchTracking: false,
         enableCorsCorrelation: true,
         enableRequestHeaderTracking: true,
         enableResponseHeaderTracking: true,
-        // Same App Insights resource as the backend — distinguish by cloud_RoleName.
       },
     });
     appInsights.loadAppInsights();
+    const clientId = getClientId();
     appInsights.addTelemetryInitializer((envelope) => {
       envelope.tags = envelope.tags ?? {};
       envelope.tags["ai.cloud.role"] = roleName;
-      const props = (envelope.data ??= {} as Record<string, unknown>);
-      const baseData = (props as { baseData?: { properties?: Record<string, unknown> } }).baseData ?? {};
+      const data = (envelope.data ??= {} as Record<string, unknown>);
+      const baseData = (data as { baseData?: { properties?: Record<string, unknown> } }).baseData ?? {};
       baseData.properties = {
         ...(baseData.properties ?? {}),
-        environment,
-        buildSha: buildSha ?? "",
-        buildTag: buildTag ?? "",
+        environment: environmentCache,
+        buildSha: buildShaCache,
+        buildTag: buildTagCache,
+        client_id: clientId,
       };
     });
     appInsights.trackPageView();
-    log.info("App Insights initialized", { roleName, environment });
+    log.info("App Insights initialized", { roleName, environment: environmentCache, clientId });
   } catch (e) {
     log.warn("App Insights init failed", e);
     appInsights = null;
+  }
+}
+
+/** Bind authenticated user once known. Use a stable opaque ID — never email/UPN. */
+export function setUser(opaqueId: string, accountId?: string): void {
+  if (!appInsights || !opaqueId) return;
+  try {
+    appInsights.setAuthenticatedUserContext(opaqueId, accountId, true);
+  } catch (e) {
+    log.warn("setAuthenticatedUserContext failed", e);
+  }
+}
+
+export function clearUser(): void {
+  if (!appInsights) return;
+  try {
+    appInsights.clearAuthenticatedUserContext();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Emit a structured custom event (App Insights `customEvents` table). */
+export function trackEvent(name: string, properties?: Record<string, unknown>): void {
+  if (!appInsights) return;
+  try {
+    appInsights.trackEvent({ name }, properties as Record<string, string>);
+  } catch (e) {
+    log.warn("trackEvent failed", e);
   }
 }
 
@@ -98,3 +134,58 @@ export function trackTrace(message: string, properties?: Record<string, unknown>
   if (!appInsights) return;
   appInsights.trackTrace({ message, properties });
 }
+
+// ── apiFetch wrapper ────────────────────────────────────────────────────────
+
+export type ApiContext = {
+  sessionId?: string;
+  /** Optional explicit request id; otherwise one is generated per call. */
+  requestId?: string;
+  /** Optional Authorization Bearer token. */
+  authToken?: string;
+};
+
+/** fetch() wrapper that injects correlation headers + tracks the call as a custom event. */
+export async function apiFetch(
+  input: string,
+  init: RequestInit = {},
+  ctx: ApiContext = {},
+): Promise<Response> {
+  const requestId = ctx.requestId ?? (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2));
+  const headers = new Headers(init.headers ?? {});
+  headers.set("X-Client-Id", getClientId());
+  headers.set("X-Request-Id", requestId);
+  if (ctx.sessionId) headers.set("X-Session-Id", ctx.sessionId);
+  if (ctx.authToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${ctx.authToken}`);
+  }
+
+  const t0 = performance.now();
+  let res: Response;
+  try {
+    res = await fetch(input, { ...init, headers });
+  } catch (e) {
+    trackException(e, {
+      url: input,
+      method: init.method ?? "GET",
+      request_id: requestId,
+      session_id: ctx.sessionId ?? "",
+      duration_ms: Math.round(performance.now() - t0),
+      outcome: "network_error",
+    });
+    throw e;
+  }
+  const duration = Math.round(performance.now() - t0);
+  if (!res.ok) {
+    trackEvent("api.request.failed", {
+      url: input,
+      method: init.method ?? "GET",
+      status: String(res.status),
+      request_id: requestId,
+      session_id: ctx.sessionId ?? "",
+      duration_ms: String(duration),
+    });
+  }
+  return res;
+}
+

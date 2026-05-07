@@ -80,12 +80,20 @@ async def chat(
     if not user_text:
         raise HTTPException(status_code=400, detail="Message must not be empty")
 
-    logger.info(
-        "POST /api/chat | stage=%s user=%s msg=%s has_photo=%s",
-        body.currentStageId,
-        body.identity.name or user.get("name", "anon"),
-        user_text[:60],
-        bool(body.photoBase64),
+    # Bind validated user identity into request context (hashed — no PII in logs)
+    from profile_agent.config.context import hash_user_id, user_id_var
+    from profile_agent.config.events import wide_event
+    user_id_var.set(hash_user_id(user.get("user_id") or user.get("email", "")))
+
+    wide_event(
+        "chat.received",
+        stage_id=body.currentStageId,
+        message_len=len(user_text),
+        has_photo=bool(body.photoBase64),
+        has_clifton=bool(body.cliftonStrengths),
+        has_linkedin=bool(body.linkedin_skills),
+        has_github=bool(body.github_skills),
+        completed_stages=len(body.completedStageSummaries),
     )
 
     # Map request models to service dataclasses

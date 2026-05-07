@@ -9,6 +9,7 @@ import type { CardData, StateUpdate, ClientSession, CardStyle } from "./types";
 import { EMPTY_CARD_STYLE } from "./types";
 import type { StrengthsResponse } from "./utils/strengthsClient";
 import { createLogger } from "./utils/logger";
+import { apiFetch, trackEvent } from "./utils/telemetry";
 
 const log = createLogger("app");
 
@@ -134,8 +135,6 @@ export default function App() {
     setRegenerating(true);
     setCardImageSrc(null);
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      Object.assign(headers, await getAuthHeaders());
       const payload = {
         identity: session.identity,
         completedStageSummaries: session.completedStages.map((s) => ({
@@ -148,11 +147,24 @@ export default function App() {
         style: session.style ?? EMPTY_CARD_STYLE,
       };
       log.info("regenerate → POST /api/regenerate", { stages: session.completedStages.length });
-      const res = await fetch("/api/regenerate", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
+      const t0 = performance.now();
+      const tokenHeaders = await getAuthHeaders();
+      const authToken = tokenHeaders.Authorization?.replace(/^Bearer\s+/i, "");
+      trackEvent("regenerate.started", {
+        session_id: session.sessionId,
+        num_stages: String(session.completedStages.length),
+        has_clifton: String(Boolean(session.cliftonStrengths?.length)),
+        has_photo: String(Boolean(session.photoBase64)),
       });
+      const res = await apiFetch(
+        "/api/regenerate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+        { sessionId: session.sessionId, authToken },
+      );
       if (!res.ok) {
         let detail = "";
         try {
@@ -182,6 +194,21 @@ export default function App() {
       };
       setCardData(body.cardData);
       updateSession({ cardData: body.cardData });
+      const imageOutcome = body.cardImage?.url
+        ? "url"
+        : body.cardImage?.base64
+        ? "base64"
+        : body.cardImageError === "rate_limited"
+        ? "rate_limited"
+        : body.cardImageError
+        ? "failed"
+        : "missing";
+      trackEvent("regenerate.completed", {
+        session_id: session.sessionId,
+        num_stages: String(session.completedStages.length),
+        duration_ms: String(Math.round(performance.now() - t0)),
+        image_outcome: imageOutcome,
+      });
       if (body.cardImage?.url) {
         log.info("regenerate ✓ image (url)");
         setCardImageSrc(body.cardImage.url);

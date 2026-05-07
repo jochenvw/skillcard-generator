@@ -1,6 +1,8 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { useMsal } from "@azure/msal-react";
 import type { AccountInfo } from "@azure/msal-browser";
+
+import { setUser as telemetrySetUser, clearUser as telemetryClearUser } from "../utils/telemetry";
 
 export type AuthUser = {
   name: string;
@@ -34,6 +36,15 @@ export function MsalAuthBridge({
 }) {
   const { instance, accounts } = useMsal();
   const account: AccountInfo | undefined = accounts[0];
+
+  // Bind authenticated user to App Insights (opaque homeAccountId — never email).
+  useEffect(() => {
+    if (account?.homeAccountId) {
+      telemetrySetUser(account.homeAccountId, account.tenantId);
+    } else {
+      telemetryClearUser();
+    }
+  }, [account]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

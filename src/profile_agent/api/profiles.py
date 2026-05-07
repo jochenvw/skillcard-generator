@@ -43,27 +43,35 @@ async def extract_linkedin_endpoint(
     if not text and not url:
         raise HTTPException(status_code=400, detail="Provide either 'text' or 'url'")
 
-    # If URL provided, fetch the profile text first
-    if url and not text:
-        logger.info("POST /api/extract-linkedin | user=%s fetching url=%s", user.get("name", "anon"), url)
+    from profile_agent.config.context import hash_user_id, user_id_var
+    from profile_agent.config.events import timed_event
+    user_id_var.set(hash_user_id(user.get("user_id") or user.get("email", "")))
+
+    with timed_event(
+        "extract_linkedin.completed",
+        source="url" if url and not body.text else "text",
+        url_provided=bool(url),
+    ) as ev:
+        if url and not text:
+            try:
+                text = await fetch_linkedin_profile_text(url)
+            except ProfileExtractionError as exc:
+                ev["fetch_outcome"] = "failed"
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+            ev["fetch_outcome"] = "ok"
+
+        ev["text_len"] = len(text)
         try:
-            text = await fetch_linkedin_profile_text(url)
+            result = await extract_linkedin_skills(text)
         except ProfileExtractionError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from None
+            logger.exception("linkedin extraction failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from None
+        except Exception:
+            logger.exception("unexpected error in linkedin extraction")
+            raise HTTPException(status_code=500, detail="Failed to extract LinkedIn skills") from None
 
-    logger.info("POST /api/extract-linkedin | user=%s text_len=%d", user.get("name", "anon"), len(text))
-
-    try:
-        result = await extract_linkedin_skills(text)
-    except ProfileExtractionError as exc:
-        logger.exception("linkedin extraction failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from None
-    except Exception:
-        logger.exception("unexpected error in linkedin extraction")
-        raise HTTPException(status_code=500, detail="Failed to extract LinkedIn skills") from None
-
-    logger.info("POST /api/extract-linkedin success | skills_count=%d", len(result.get("skills", [])))
-    return result
+        ev["skills_count"] = len(result.get("skills", []))
+        return result
 
 
 @router.post("/extract-github")
@@ -81,16 +89,18 @@ async def extract_github_endpoint(
     if not username:
         raise HTTPException(status_code=400, detail="username must not be empty")
 
-    logger.info("POST /api/extract-github | user=%s github_user=%s", user.get("name", "anon"), username)
+    from profile_agent.config.context import hash_user_id, user_id_var
+    from profile_agent.config.events import timed_event
+    user_id_var.set(hash_user_id(user.get("user_id") or user.get("email", "")))
 
-    try:
-        result = await extract_github_skills(username)
-    except ProfileExtractionError as exc:
-        logger.exception("github extraction failed | username=%s", username)
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    except Exception:
-        logger.exception("unexpected error in github extraction | username=%s", username)
-        raise HTTPException(status_code=500, detail="Failed to extract GitHub skills") from None
-
-    logger.info("POST /api/extract-github success | username=%s skills_count=%d", username, len(result.get("skills", [])))
-    return result
+    with timed_event("extract_github.completed", github_user=username) as ev:
+        try:
+            result = await extract_github_skills(username)
+        except ProfileExtractionError as exc:
+            logger.exception("github extraction failed | username=%s", username)
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except Exception:
+            logger.exception("unexpected error in github extraction | username=%s", username)
+            raise HTTPException(status_code=500, detail="Failed to extract GitHub skills") from None
+        ev["skills_count"] = len(result.get("skills", []))
+        return result
