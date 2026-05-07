@@ -203,7 +203,9 @@ export default function App() {
         })),
         cliftonStrengths: session.cliftonStrengths || [],
         photoBase64: session.photoBase64,
-        includeImage: true,
+        // Image is now generated separately (via /api/regenerate/image + polling)
+        // because Container Apps ingress times out at 240s and image gen can take 200-320s.
+        includeImage: false,
         style: session.style ?? EMPTY_CARD_STYLE,
       };
       log.info("regenerate → POST /api/regenerate", { stages: session.completedStages.length });
@@ -253,55 +255,150 @@ export default function App() {
       }
       const body = (await res.json()) as {
         cardData: CardData;
-        cardImage?: { url?: string; base64?: string } | null;
-        cardImageError?: string;
-        cardImageRetryAfter?: number;
       };
       setCardData(body.cardData);
       updateSession({ cardData: body.cardData });
-      const imageOutcome = body.cardImage?.url
-        ? "url"
-        : body.cardImage?.base64
-        ? "base64"
-        : body.cardImageError === "rate_limited"
-        ? "rate_limited"
-        : body.cardImageError
-        ? "failed"
-        : "missing";
+      const textDurationMs = Math.round(performance.now() - t0);
+      log.info("regenerate ✓ text", { ms: textDurationMs });
+      trackEvent("regenerate.text.completed", {
+        session_id: session.sessionId,
+        num_stages: String(session.completedStages.length),
+        duration_ms: String(textDurationMs),
+      });
+
+      // ── Kick off image generation as a background job and poll ────────────
+      let imageOutcome: "ready" | "failed" | "rate_limited" | "timeout" | "skipped" = "skipped";
+      let imageRetryAfter: number | undefined;
+      try {
+        const startRes = await apiFetch(
+          "/api/regenerate/image",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              cardData: body.cardData,
+              photoBase64: session.photoBase64,
+              style: session.style ?? EMPTY_CARD_STYLE,
+            }),
+          },
+          { sessionId: session.sessionId, authToken },
+        );
+        if (!startRes.ok) {
+          throw new Error(`POST /api/regenerate/image failed: HTTP ${startRes.status}`);
+        }
+        const { job_id: jobId } = (await startRes.json()) as { job_id: string };
+        log.info("regenerate.image job started", { jobId });
+
+        const POLL_INTERVAL_MS = 3000;
+        const POLL_MAX_MS = 8 * 60 * 1000; // 8 minutes
+        const pollStart = performance.now();
+        let pollCount = 0;
+
+        while (true) {
+          if (performance.now() - pollStart > POLL_MAX_MS) {
+            imageOutcome = "timeout";
+            break;
+          }
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+          pollCount++;
+          const pollRes = await apiFetch(
+            `/api/regenerate/image/${jobId}`,
+            { method: "GET" },
+            { sessionId: session.sessionId, authToken },
+          );
+          if (!pollRes.ok) {
+            // 404 (expired/lost on replica restart) or 5xx — treat as transient/failure
+            if (pollRes.status === 404) {
+              throw new Error("Image job lost (server may have restarted). Please retry.");
+            }
+            // transient — keep polling unless we've been doing it for a while
+            if (performance.now() - pollStart > 30000) {
+              throw new Error(`Image polling failed: HTTP ${pollRes.status}`);
+            }
+            continue;
+          }
+          const pollBody = (await pollRes.json()) as {
+            status: "pending" | "ready" | "failed";
+            image?: { url?: string; base64?: string };
+            error?: string;
+            error_type?: string;
+            retry_after?: number;
+            duration_ms?: number;
+          };
+          if (pollBody.status === "ready" && pollBody.image) {
+            const totalImageMs = Math.round(performance.now() - pollStart);
+            log.info("regenerate ✓ image (job)", {
+              jobId,
+              polls: pollCount,
+              totalMs: totalImageMs,
+              serverMs: pollBody.duration_ms,
+            });
+            if (pollBody.image.url) {
+              setCardImageSrc(pollBody.image.url);
+            } else if (pollBody.image.base64) {
+              setCardImageSrc(`data:image/png;base64,${pollBody.image.base64}`);
+            }
+            finishImageGeneration("ready");
+            imageOutcome = "ready";
+            break;
+          }
+          if (pollBody.status === "failed") {
+            log.warn("regenerate.image job failed", {
+              jobId,
+              error: pollBody.error,
+              errorType: pollBody.error_type,
+            });
+            if (pollBody.error === "rate_limited") {
+              imageOutcome = "rate_limited";
+              imageRetryAfter = pollBody.retry_after;
+            } else {
+              imageOutcome = "failed";
+            }
+            break;
+          }
+          // status === "pending" → keep polling
+        }
+
+        if (imageOutcome === "rate_limited") {
+          const wait = imageRetryAfter
+            ? `Please wait ~${imageRetryAfter}s and try again.`
+            : "Please wait a minute and try again.";
+          finishImageGeneration("error", `Image service is rate-limited. ${wait}`);
+          toast.warning(`Card text was regenerated, but the portrait service is rate-limited. ${wait}`, {
+            title: "Image service rate-limited",
+          });
+        } else if (imageOutcome === "failed") {
+          finishImageGeneration("error", "Image generation failed. Try regenerating again.");
+          toast.warning("Card text was regenerated, but the portrait could not be created.", {
+            title: "Portrait generation failed",
+            action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+          });
+        } else if (imageOutcome === "timeout") {
+          finishImageGeneration("error", "Image generation timed out. Try regenerating again.");
+          toast.warning("Portrait generation took too long. Card text is ready — try regenerating the image.", {
+            title: "Portrait timed out",
+            action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+          });
+        }
+      } catch (imgErr) {
+        log.error("Image polling failed", imgErr);
+        imageOutcome = "failed";
+        finishImageGeneration("error", imgErr instanceof Error ? imgErr.message : "Image generation failed");
+        toast.warning(
+          imgErr instanceof Error ? imgErr.message : "Card text was regenerated, but the portrait could not be created.",
+          {
+            title: "Portrait generation failed",
+            action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+          },
+        );
+      }
+
       trackEvent("regenerate.completed", {
         session_id: session.sessionId,
         num_stages: String(session.completedStages.length),
         duration_ms: String(Math.round(performance.now() - t0)),
         image_outcome: imageOutcome,
       });
-      if (body.cardImage?.url) {
-        log.info("regenerate ✓ image (url)");
-        setCardImageSrc(body.cardImage.url);
-        finishImageGeneration("ready");
-      } else if (body.cardImage?.base64) {
-        log.info("regenerate ✓ image (base64)", { bytes: body.cardImage.base64.length });
-        setCardImageSrc(`data:image/png;base64,${body.cardImage.base64}`);
-        finishImageGeneration("ready");
-      } else if (body.cardImageError === "rate_limited") {
-        log.warn("regenerate image rate-limited", { retryAfter: body.cardImageRetryAfter });
-        const wait = body.cardImageRetryAfter
-          ? `Please wait ~${body.cardImageRetryAfter}s and try again.`
-          : "Please wait a minute and try again.";
-        finishImageGeneration("error", `Image service is rate-limited. ${wait}`);
-        toast.warning(`Card text was regenerated, but the portrait service is rate-limited. ${wait}`, {
-          title: "Image service rate-limited",
-        });
-      } else if (body.cardImageError) {
-        log.warn("regenerate image failed", { error: body.cardImageError });
-        finishImageGeneration("error", "Image generation failed. Try regenerating again.");
-        toast.warning("Card text was regenerated, but the portrait could not be created.", {
-          title: "Portrait generation failed",
-          action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
-        });
-      } else {
-        // Card text came back but no image and no explicit error — treat as failure.
-        finishImageGeneration("error", "Portrait was not produced. Try regenerating.");
-      }
     } catch (err) {
       log.error("Regenerate failed", err);
       finishImageGeneration("error", err instanceof Error ? err.message : "Regeneration failed");
