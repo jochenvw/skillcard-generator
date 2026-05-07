@@ -21,9 +21,13 @@ import time
 from contextlib import contextmanager
 from typing import Any
 
+from profile_agent.config.version import get_app_git_tag, get_app_version
+
 _logger = logging.getLogger("profile_agent.events")
 
 EVENT_VERSION = 1
+_APP_VERSION = get_app_version()
+_APP_GIT_TAG = get_app_git_tag()
 
 
 def wide_event(
@@ -34,6 +38,9 @@ def wide_event(
     **attrs: Any,
 ) -> None:
     """Emit a structured wide event.
+
+    Every event automatically carries ``app_version`` (and ``app_git_tag`` when
+    set) so logs, errors and metrics can be correlated to a specific deploy.
 
     Example:
         wide_event(
@@ -49,7 +56,10 @@ def wide_event(
         "event_name": event_name,
         "event_version": EVENT_VERSION,
         "outcome": outcome,
+        "app_version": _APP_VERSION,
     }
+    if _APP_GIT_TAG:
+        extra["app_git_tag"] = _APP_GIT_TAG
     for k, v in attrs.items():
         # Cap large strings to keep ingestion cost bounded.
         if isinstance(v, str) and len(v) > 2048:

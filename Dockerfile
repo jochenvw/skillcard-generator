@@ -12,6 +12,10 @@ RUN npm run build
 
 # Stage 2: Final image
 FROM python:3.12-slim
+ARG GIT_SHA=dev
+ARG GIT_TAG=
+ENV APP_VERSION=$GIT_SHA
+ENV APP_GIT_TAG=$GIT_TAG
 
 WORKDIR /app
 

@@ -15,6 +15,8 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 
+from profile_agent.config.version import get_app_git_tag, get_app_version
+
 logger = logging.getLogger(__name__)
 
 _configured = False
@@ -24,9 +26,13 @@ _app_instrumented = False
 def configure_telemetry(
     connection_string: str | None = None,
     service_name: str = "profile-agent",
-    service_version: str = "0.1.0",
+    service_version: str | None = None,
 ) -> None:
     """Configure OpenTelemetry with Azure Monitor + Live Metrics.
+
+    ``service_version`` defaults to the resolved app version (git SHA from the
+    container build), so AppInsights ``cloud_RoleVersion`` is populated on
+    every span / log / metric without any extra plumbing.
 
     Safe to call multiple times — subsequent calls are no-ops.
     """
@@ -34,10 +40,18 @@ def configure_telemetry(
     if _configured:
         return
 
-    resource = Resource.create({
+    if service_version is None:
+        service_version = get_app_version()
+
+    resource_attrs: dict = {
         "service.name": service_name,
         "service.version": service_version,
-    })
+    }
+    git_tag = get_app_git_tag()
+    if git_tag:
+        resource_attrs["service.git_tag"] = git_tag
+    resource = Resource.create(resource_attrs)
+    logger.info("Telemetry resource: service.name=%s service.version=%s", service_name, service_version)
 
     if connection_string:
         try:
