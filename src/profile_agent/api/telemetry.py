@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Response, status
 
 from profile_agent.config.events import wide_event
 from profile_agent.config.settings import Settings, get_settings
+from profile_agent.config.version import get_app_git_tag, get_app_version
 
 router = APIRouter(prefix="/api/telemetry", tags=["telemetry"])
 
@@ -24,6 +25,8 @@ async def telemetry_config(settings: Settings = Depends(get_settings)) -> dict[s
         "connectionString": settings.appinsights_connection_string or "",
         "roleName": "profile-agent-frontend",
         "environment": settings.environment.value,
+        "appVersion": get_app_version(),
+        "appGitTag": get_app_git_tag(),
     }
 
 

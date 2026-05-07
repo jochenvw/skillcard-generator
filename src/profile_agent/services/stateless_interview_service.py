@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 
 from openai import AsyncAzureOpenAI, RateLimitError
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from pydantic import ValidationError
 
@@ -1039,26 +1041,60 @@ async def _attempt_image_generation(
         prompt_chars=len(prompt),
     )
     try:
-        if photo_bytes:
-            logger.info("Generating card image with reference photo (%d bytes) deployment=%s",
-                        photo_size, deployment)
-            buf = io.BytesIO(photo_bytes)
-            buf.name = "photo.png"
-            response = await image_client.images.edit(
-                model=deployment,
-                image=buf,
-                prompt=prompt,
-                size=size,
-                n=1,
-            )
-        else:
-            logger.info("Generating card image without reference photo deployment=%s", deployment)
-            response = await image_client.images.generate(
-                model=deployment,
-                prompt=prompt,
-                size=size,
-                n=1,
-            )
+        # Manual OTel span — opentelemetry-instrumentation-openai-v2 only covers
+        # chat.completions, NOT images.generate/edit. Without this, image calls
+        # are invisible in App Insights dependencies.
+        tracer = trace.get_tracer("profile_agent.image")
+        op = "image.edit" if photo_bytes else "image.generate"
+        endpoint = ""
+        try:
+            endpoint = str(image_client.base_url) if hasattr(image_client, "base_url") else ""
+        except Exception:
+            endpoint = ""
+        with tracer.start_as_current_span(
+            f"{op} {deployment}",
+            kind=SpanKind.CLIENT,
+            attributes={
+                "gen_ai.system": "az.ai.openai",
+                "gen_ai.operation.name": op,
+                "gen_ai.request.model": deployment,
+                "gen_ai.request.image.size": size,
+                "server.address": endpoint,
+                "image.mode": mode,
+                "image.input_bytes": photo_size,
+                "image.prompt_chars": len(prompt),
+            },
+        ) as span:
+            try:
+                if photo_bytes:
+                    logger.info("Generating card image with reference photo (%d bytes) deployment=%s",
+                                photo_size, deployment)
+                    buf = io.BytesIO(photo_bytes)
+                    buf.name = "photo.png"
+                    response = await image_client.images.edit(
+                        model=deployment,
+                        image=buf,
+                        prompt=prompt,
+                        size=size,
+                        n=1,
+                    )
+                else:
+                    logger.info("Generating card image without reference photo deployment=%s", deployment)
+                    response = await image_client.images.generate(
+                        model=deployment,
+                        prompt=prompt,
+                        size=size,
+                        n=1,
+                    )
+                # Tag response model when the SDK returns it (helps when fallback fires).
+                resp_model = getattr(response, "model", None)
+                if resp_model:
+                    span.set_attribute("gen_ai.response.model", resp_model)
+                span.set_status(Status(StatusCode.OK))
+            except Exception as exc:
+                span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                span.record_exception(exc)
+                raise
     except Exception as exc:
         wide_event(
             "image.attempt.completed",

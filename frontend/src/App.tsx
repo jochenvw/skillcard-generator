@@ -9,7 +9,7 @@ import type { CardData, StateUpdate, ClientSession, CardStyle } from "./types";
 import { EMPTY_CARD_STYLE } from "./types";
 import type { StrengthsResponse } from "./utils/strengthsClient";
 import { createLogger } from "./utils/logger";
-import { apiFetch, startHeartbeat, trackEvent } from "./utils/telemetry";
+import { apiFetch, startHeartbeat, trackEvent, getAppVersion, getAppGitTag } from "./utils/telemetry";
 import { useToast } from "./components/Toast";
 
 const log = createLogger("app");
@@ -53,6 +53,7 @@ export default function App() {
     handleStateUpdate,
     resetSession,
     exportSession,
+    consumeFreshFlag,
   } = useLocalSession();
   const { user, getAuthHeaders, signOut } = useAuth();
   const toast = useToast();
@@ -84,6 +85,9 @@ export default function App() {
     typeof window !== "undefined" && localStorage.getItem("skillcard-image") ? "ready" : "idle",
   );
   const [imageError, setImageError] = useState<string | null>(null);
+  // Server-side throttle queue position for the in-flight image job.
+  // When non-null and imageStatus==="loading", the indicator renders queued state.
+  const [imageQueueInfo, setImageQueueInfo] = useState<{ position: number; etaSec: number } | null>(null);
   // Safety-net: if a generation gets stuck (network drop, server crash with no
   // response), force back to 'error' after this many ms so the UI never spins
   // forever. Cleared on success, error, or new generation.
@@ -97,16 +101,21 @@ export default function App() {
   const startImageGeneration = useCallback(() => {
     clearImageTimeout();
     setImageError(null);
+    setImageQueueInfo(null);
     setImageStatus("loading");
+    // 16min covers worst-case queue depth (12) + p50 runtime (5min). Aligned
+    // with the backend's queue capacity calculation.
     imageTimeoutRef.current = setTimeout(() => {
-      log.warn("Image generation timed out client-side after 5min");
+      log.warn("Image generation timed out client-side after 16min");
       setImageStatus("error");
       setImageError("Timed out waiting for the portrait. Try regenerating.");
-    }, 5 * 60 * 1000);
+      setImageQueueInfo(null);
+    }, 16 * 60 * 1000);
   }, [clearImageTimeout]);
   const finishImageGeneration = useCallback(
     (outcome: "ready" | "error", message?: string) => {
       clearImageTimeout();
+      setImageQueueInfo(null);
       setImageStatus(outcome);
       setImageError(outcome === "error" ? (message ?? "Portrait generation failed.") : null);
     },
@@ -138,6 +147,34 @@ export default function App() {
   useEffect(() => {
     startHeartbeat(() => sessionIdRef.current);
   }, []);
+
+  // ── Funnel telemetry ────────────────────────────────────────────────────
+  // session.started fires exactly once per fresh session creation (no prior
+  // localStorage). consumeFreshFlag() returns true only on the first call.
+  useEffect(() => {
+    if (!session) return;
+    if (consumeFreshFlag()) {
+      trackEvent("session.started", {
+        session_id: session.sessionId,
+        current_stage: session.currentStageId,
+      });
+    }
+  }, [session, consumeFreshFlag]);
+
+  // stage.entered fires on every distinct currentStageId we observe (initial
+  // load + each advance). Use a ref to dedupe so re-renders don't refire.
+  const lastStageRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!session) return;
+    const stageId = session.currentStageId;
+    if (lastStageRef.current === stageId) return;
+    lastStageRef.current = stageId;
+    trackEvent("stage.entered", {
+      session_id: session.sessionId,
+      stage_id: stageId,
+      completed_count: String(session.completedStages.length),
+    });
+  }, [session]);
 
   // ── /demo route — fetch a pre-baked persona + generated card image ──────
   const demoFetchedRef = useRef(false);
@@ -203,7 +240,9 @@ export default function App() {
         })),
         cliftonStrengths: session.cliftonStrengths || [],
         photoBase64: session.photoBase64,
-        includeImage: true,
+        // Image is now generated separately (via /api/regenerate/image + polling)
+        // because Container Apps ingress times out at 240s and image gen can take 200-320s.
+        includeImage: false,
         style: session.style ?? EMPTY_CARD_STYLE,
       };
       log.info("regenerate → POST /api/regenerate", { stages: session.completedStages.length });
@@ -253,55 +292,201 @@ export default function App() {
       }
       const body = (await res.json()) as {
         cardData: CardData;
-        cardImage?: { url?: string; base64?: string } | null;
-        cardImageError?: string;
-        cardImageRetryAfter?: number;
       };
       setCardData(body.cardData);
       updateSession({ cardData: body.cardData });
-      const imageOutcome = body.cardImage?.url
-        ? "url"
-        : body.cardImage?.base64
-        ? "base64"
-        : body.cardImageError === "rate_limited"
-        ? "rate_limited"
-        : body.cardImageError
-        ? "failed"
-        : "missing";
+      const textDurationMs = Math.round(performance.now() - t0);
+      log.info("regenerate ✓ text", { ms: textDurationMs });
+      trackEvent("regenerate.text.completed", {
+        session_id: session.sessionId,
+        num_stages: String(session.completedStages.length),
+        duration_ms: String(textDurationMs),
+      });
+
+      // ── Kick off image generation as a queued background job and poll ─────
+      let imageOutcome: "ready" | "failed" | "rate_limited" | "timeout" | "queue_full" | "cancelled" | "skipped" = "skipped";
+      let imageRetryAfter: number | undefined;
+      try {
+        const startRes = await apiFetch(
+          "/api/regenerate/image",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              cardData: body.cardData,
+              photoBase64: session.photoBase64,
+              style: session.style ?? EMPTY_CARD_STYLE,
+            }),
+          },
+          { sessionId: session.sessionId, authToken },
+        );
+
+        // Backend returns 429 when the queue is full. Surface that distinctly.
+        if (startRes.status === 429) {
+          let detail: { retry_after_s?: number; message?: string } = {};
+          try {
+            const body429 = await startRes.json();
+            detail = body429?.detail ?? body429 ?? {};
+          } catch { /* ignore */ }
+          const retryAfter = detail.retry_after_s ?? 90;
+          imageOutcome = "queue_full";
+          imageRetryAfter = retryAfter;
+          throw new Error(detail.message || `Image queue is full. Try again in ~${retryAfter}s.`);
+        }
+        if (!startRes.ok) {
+          throw new Error(`POST /api/regenerate/image failed: HTTP ${startRes.status}`);
+        }
+
+        const startBody = (await startRes.json()) as {
+          job_id?: string;
+          state: "queued" | "running" | "done" | "failed" | "cancelled";
+          queue_position?: number;
+          estimated_wait_s?: number;
+          result?: { base64?: string; url?: string };
+          cache_hit?: boolean;
+        };
+
+        // ── Cache hit short-circuit (server returned the image inline) ────
+        if (startBody.state === "done" && startBody.result) {
+          const totalImageMs = Math.round(performance.now() - t0);
+          log.info("regenerate ✓ image (cache)", { totalMs: totalImageMs });
+          if (startBody.result.base64) {
+            setCardImageSrc(`data:image/png;base64,${startBody.result.base64}`);
+          } else if (startBody.result.url) {
+            setCardImageSrc(startBody.result.url);
+          }
+          finishImageGeneration("ready");
+          imageOutcome = "ready";
+        } else if (startBody.job_id) {
+          const jobId = startBody.job_id;
+          if (startBody.state === "queued" && startBody.queue_position && startBody.estimated_wait_s) {
+            setImageQueueInfo({ position: startBody.queue_position, etaSec: startBody.estimated_wait_s });
+          }
+          log.info("regenerate.image job queued", {
+            jobId,
+            state: startBody.state,
+            queuePosition: startBody.queue_position,
+            etaSec: startBody.estimated_wait_s,
+          });
+
+          const POLL_INTERVAL_MS = 3000;
+          const POLL_MAX_MS = 15 * 60 * 1000; // 15 minutes — covers worst-case queue depth + runtime.
+          const pollStart = performance.now();
+          let pollCount = 0;
+
+          while (true) {
+            if (performance.now() - pollStart > POLL_MAX_MS) {
+              imageOutcome = "timeout";
+              break;
+            }
+            await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+            pollCount++;
+            const pollRes = await apiFetch(
+              `/api/regenerate/image/${jobId}`,
+              { method: "GET" },
+              { sessionId: session.sessionId, authToken },
+            );
+            if (!pollRes.ok) {
+              if (pollRes.status === 404) {
+                throw new Error("Image job lost (server may have restarted). Please retry.");
+              }
+              if (performance.now() - pollStart > 30000) {
+                throw new Error(`Image polling failed: HTTP ${pollRes.status}`);
+              }
+              continue;
+            }
+            const pollBody = (await pollRes.json()) as {
+              state: "queued" | "running" | "done" | "failed" | "cancelled";
+              queue_position?: number;
+              estimated_wait_s?: number;
+              result?: { url?: string; base64?: string };
+              error?: string;
+              error_type?: string;
+              retry_after?: number;
+            };
+            if (pollBody.state === "queued" && pollBody.queue_position && pollBody.estimated_wait_s) {
+              setImageQueueInfo({ position: pollBody.queue_position, etaSec: pollBody.estimated_wait_s });
+            } else if (pollBody.state === "running") {
+              setImageQueueInfo(null); // running indicator takes over
+            }
+            if (pollBody.state === "done" && pollBody.result) {
+              const totalImageMs = Math.round(performance.now() - pollStart);
+              log.info("regenerate ✓ image (job)", { jobId, polls: pollCount, totalMs: totalImageMs });
+              if (pollBody.result.url) {
+                setCardImageSrc(pollBody.result.url);
+              } else if (pollBody.result.base64) {
+                setCardImageSrc(`data:image/png;base64,${pollBody.result.base64}`);
+              }
+              finishImageGeneration("ready");
+              imageOutcome = "ready";
+              break;
+            }
+            if (pollBody.state === "failed" || pollBody.state === "cancelled") {
+              log.warn("regenerate.image job ended", {
+                jobId,
+                state: pollBody.state,
+                error: pollBody.error,
+                errorType: pollBody.error_type,
+              });
+              if (pollBody.error_type === "rate_limited" || pollBody.error === "rate_limited") {
+                imageOutcome = "rate_limited";
+                imageRetryAfter = pollBody.retry_after;
+              } else if (pollBody.state === "cancelled") {
+                imageOutcome = "cancelled";
+              } else {
+                imageOutcome = "failed";
+              }
+              break;
+            }
+            // queued or running → keep polling
+          }
+
+          if (imageOutcome === "rate_limited") {
+            const wait = imageRetryAfter
+              ? `Please wait ~${imageRetryAfter}s and try again.`
+              : "Please wait a minute and try again.";
+            finishImageGeneration("error", `Image service is rate-limited. ${wait}`);
+            toast.warning(`Card text was regenerated, but the portrait service is rate-limited. ${wait}`, {
+              title: "Image service rate-limited",
+            });
+          } else if (imageOutcome === "cancelled") {
+            finishImageGeneration("error", "Server restarted while your portrait was being made. Please try again.");
+            toast.warning("The portrait was cancelled — server restarted. Click try again.", {
+              title: "Portrait cancelled",
+              action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+            });
+          } else if (imageOutcome === "failed") {
+            finishImageGeneration("error", "Image generation failed. Try regenerating again.");
+            toast.warning("Card text was regenerated, but the portrait could not be created.", {
+              title: "Portrait generation failed",
+              action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+            });
+          } else if (imageOutcome === "timeout") {
+            finishImageGeneration("error", "Image generation timed out. Try regenerating again.");
+            toast.warning("Portrait generation took too long. Card text is ready — try regenerating the image.", {
+              title: "Portrait timed out",
+              action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+            });
+          }
+        }
+      } catch (imgErr) {
+        log.error("Image polling failed", imgErr);
+        const failureKind = imageOutcome === "queue_full" ? "queue_full" : "failed";
+        if (failureKind !== "queue_full") imageOutcome = "failed";
+        const errMsg = imgErr instanceof Error ? imgErr.message : "Image generation failed";
+        finishImageGeneration("error", errMsg);
+        toast.warning(errMsg, {
+          title: imageOutcome === "queue_full" ? "Queue full" : "Portrait generation failed",
+          action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+        });
+      }
+
       trackEvent("regenerate.completed", {
         session_id: session.sessionId,
         num_stages: String(session.completedStages.length),
         duration_ms: String(Math.round(performance.now() - t0)),
         image_outcome: imageOutcome,
       });
-      if (body.cardImage?.url) {
-        log.info("regenerate ✓ image (url)");
-        setCardImageSrc(body.cardImage.url);
-        finishImageGeneration("ready");
-      } else if (body.cardImage?.base64) {
-        log.info("regenerate ✓ image (base64)", { bytes: body.cardImage.base64.length });
-        setCardImageSrc(`data:image/png;base64,${body.cardImage.base64}`);
-        finishImageGeneration("ready");
-      } else if (body.cardImageError === "rate_limited") {
-        log.warn("regenerate image rate-limited", { retryAfter: body.cardImageRetryAfter });
-        const wait = body.cardImageRetryAfter
-          ? `Please wait ~${body.cardImageRetryAfter}s and try again.`
-          : "Please wait a minute and try again.";
-        finishImageGeneration("error", `Image service is rate-limited. ${wait}`);
-        toast.warning(`Card text was regenerated, but the portrait service is rate-limited. ${wait}`, {
-          title: "Image service rate-limited",
-        });
-      } else if (body.cardImageError) {
-        log.warn("regenerate image failed", { error: body.cardImageError });
-        finishImageGeneration("error", "Image generation failed. Try regenerating again.");
-        toast.warning("Card text was regenerated, but the portrait could not be created.", {
-          title: "Portrait generation failed",
-          action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
-        });
-      } else {
-        // Card text came back but no image and no explicit error — treat as failure.
-        finishImageGeneration("error", "Portrait was not produced. Try regenerating.");
-      }
     } catch (err) {
       log.error("Regenerate failed", err);
       finishImageGeneration("error", err instanceof Error ? err.message : "Regeneration failed");
@@ -481,6 +666,20 @@ export default function App() {
             setImageStatus("idle");
             return;
           }
+          // stage.advanced — fire BEFORE handleStateUpdate so we still see the
+          // stage we're leaving (handleStateUpdate mutates currentStageId).
+          if (receivedStateUpdate.stageAdvanced && session) {
+            const fromStage = session.currentStageId;
+            const toStage = receivedStateUpdate.currentStageId;
+            const turnsInStage = session.currentStageMessages.length + 2; // +2 = the user/assistant pair we just exchanged
+            trackEvent("stage.advanced", {
+              session_id: session.sessionId,
+              from_stage: fromStage,
+              to_stage: toStage,
+              turn_count: String(turnsInStage),
+              completed_count: String(session.completedStages.length + 1),
+            });
+          }
           handleStateUpdate(receivedStateUpdate, assistantText, text);
 
           // End compaction indicator after stage advance settles
@@ -603,6 +802,20 @@ export default function App() {
     ]);
   }, []);
 
+  // ── Export session (instrumented wrapper) ───────────────────────────────
+  const handleExport = useCallback(() => {
+    if (session) {
+      trackEvent("session.exported", {
+        session_id: session.sessionId,
+        current_stage: session.currentStageId,
+        completed_count: String(session.completedStages.length),
+        has_card_data: String(Boolean(session.cardData)),
+        has_image: String(Boolean(cardImageSrc)),
+      });
+    }
+    exportSession();
+  }, [session, cardImageSrc, exportSession]);
+
   // ── Import session from JSON file ───────────────────────────────────────
   const handleImport = useCallback(() => {
     const input = document.createElement("input");
@@ -610,11 +823,18 @@ export default function App() {
     input.accept = ".json";
     input.onchange = async () => {
       const file = input.files?.[0];
-      if (!file) return;
+      if (!file) {
+        trackEvent("session.import_failed", { reason: "no_file" });
+        return;
+      }
       try {
         const raw = await file.text();
         const imported = JSON.parse(raw) as ClientSession;
         if (!imported.sessionId || !imported.currentStageId) {
+          trackEvent("session.import_failed", {
+            reason: "invalid_schema",
+            file_size: String(file.size),
+          });
           toast.error("Invalid session file.");
           return;
         }
@@ -628,7 +848,18 @@ export default function App() {
         clearImageTimeout();
         setImageStatus("idle");
         setImageError(null);
-      } catch {
+        trackEvent("session.imported", {
+          session_id: imported.sessionId,
+          current_stage: imported.currentStageId,
+          completed_count: String(imported.completedStages?.length ?? 0),
+          has_card_data: String(Boolean(imported.cardData)),
+          file_size: String(file.size),
+        });
+      } catch (e) {
+        trackEvent("session.import_failed", {
+          reason: "parse_error",
+          message: e instanceof Error ? e.message : String(e),
+        });
         toast.error("Failed to parse session file.");
       }
     };
@@ -638,6 +869,14 @@ export default function App() {
   // ── Reset session ───────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
     if (!confirm("Reset session? All interview progress will be lost.")) return;
+    if (session) {
+      trackEvent("session.reset", {
+        session_id: session.sessionId,
+        current_stage: session.currentStageId,
+        completed_count: String(session.completedStages.length),
+        had_card_data: String(Boolean(session.cardData)),
+      });
+    }
     resetSession();
     setMessages([]);
     setCardData(null);
@@ -645,7 +884,7 @@ export default function App() {
     clearImageTimeout();
     setImageStatus("idle");
     setImageError(null);
-  }, [resetSession, setCardImageSrc, clearImageTimeout]);
+  }, [session, resetSession, setCardImageSrc, clearImageTimeout]);
 
   // ── Customize-look handler ──────────────────────────────────────────────
   const handleCardStyleChange = useCallback(
@@ -694,7 +933,9 @@ export default function App() {
           <h1 className="text-sm font-mono text-cyan-400/80 tracking-tight">
             <span className="text-zinc-500">skill-deck</span>
             <span className="text-zinc-600">@</span>
-            <span className="text-zinc-500">v0.1</span>
+            <span className="text-zinc-500" title={getAppGitTag() || getAppVersion() || "dev"}>
+              {getAppGitTag() || (getAppVersion() ? getAppVersion().slice(0, 7) : "dev")}
+            </span>
             <span className="text-zinc-600 mx-1">~/</span>
             <span className="text-cyan-400/90">interview</span>
             <span className="terminal-cursor text-cyan-400 ml-0.5">▌</span>
@@ -724,7 +965,7 @@ export default function App() {
 
             {/* Export */}
             <button
-              onClick={exportSession}
+              onClick={handleExport}
               title="Export session"
               className="rounded-lg p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
             >
@@ -779,6 +1020,7 @@ export default function App() {
           cardData={cardData}
           imageStatus={imageStatus}
           imageError={imageError}
+          imageQueueInfo={imageQueueInfo}
           onDismissImageError={() => {
             setImageStatus("idle");
             setImageError(null);

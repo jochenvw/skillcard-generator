@@ -30,6 +30,15 @@ export function getAppInsights(): ApplicationInsights | null {
   return appInsights;
 }
 
+/** Resolved app version (short git SHA) — populated after initTelemetry(). Empty until init completes. */
+export function getAppVersion(): string {
+  return buildShaCache;
+}
+
+export function getAppGitTag(): string {
+  return buildTagCache;
+}
+
 export async function initTelemetry(buildSha?: string, buildTag?: string): Promise<void> {
   if (initialized) return;
   initialized = true;
@@ -38,6 +47,8 @@ export async function initTelemetry(buildSha?: string, buildTag?: string): Promi
 
   let connectionString = "";
   let roleName = "profile-agent-frontend";
+  let appVersion = "";
+  let appGitTag = "";
   try {
     const res = await fetch("/api/telemetry/config");
     if (res.ok) {
@@ -45,6 +56,12 @@ export async function initTelemetry(buildSha?: string, buildTag?: string): Promi
       connectionString = cfg.connectionString ?? "";
       roleName = cfg.roleName ?? roleName;
       environmentCache = cfg.environment ?? environmentCache;
+      appVersion = cfg.appVersion ?? "";
+      appGitTag = cfg.appGitTag ?? "";
+      // If the build didn't bake in a SHA, inherit the backend's app version
+      // so frontend telemetry rows still carry a usable cloud_RoleVersion.
+      if (!buildShaCache && appVersion) buildShaCache = appVersion;
+      if (!buildTagCache && appGitTag) buildTagCache = appGitTag;
     }
   } catch (e) {
     log.warn("could not fetch telemetry config", e);
@@ -75,6 +92,8 @@ export async function initTelemetry(buildSha?: string, buildTag?: string): Promi
     appInsights.addTelemetryInitializer((envelope) => {
       envelope.tags = envelope.tags ?? {};
       envelope.tags["ai.cloud.role"] = roleName;
+      // cloud_RoleVersion — surfaces in App Insights as the deployment marker.
+      if (buildShaCache) envelope.tags["ai.application.ver"] = buildShaCache;
       const data = (envelope.data ??= {} as Record<string, unknown>);
       const baseData = (data as { baseData?: { properties?: Record<string, unknown> } }).baseData ?? {};
       baseData.properties = {
@@ -82,11 +101,13 @@ export async function initTelemetry(buildSha?: string, buildTag?: string): Promi
         environment: environmentCache,
         buildSha: buildShaCache,
         buildTag: buildTagCache,
+        app_version: buildShaCache,
+        app_git_tag: buildTagCache || undefined,
         client_id: clientId,
       };
     });
     appInsights.trackPageView();
-    log.info("App Insights initialized", { roleName, environment: environmentCache, clientId });
+    log.info("App Insights initialized", { roleName, environment: environmentCache, clientId, appVersion: buildShaCache });
   } catch (e) {
     log.warn("App Insights init failed", e);
     appInsights = null;

@@ -3,6 +3,9 @@ import { useState, useEffect, useRef } from "react";
 interface CardGeneratingIndicatorProps {
   active: boolean;
   variant?: "card" | "image";
+  /** When the image job is sitting in the server-side throttle queue.
+   *  When set, overrides the running indicator with a queued-state UI. */
+  queueInfo?: { position: number; etaSec: number } | null;
 }
 
 const VARIANTS = {
@@ -24,8 +27,10 @@ const VARIANTS = {
   image: {
     label: "Portrait Forge",
     procTag: "img.gen",
-    // Image generation is slow (~30-60s) — pace the bar accordingly
-    durationMs: 50000,
+    // Foundry image generation is throttled (~2 req/min) and a single render
+    // typically lands between 3 and 6 minutes. Pace the bar over 7 minutes so
+    // it doesn't sit pinned at 92% for ages.
+    durationMs: 420000,
     progressTarget: 92,
     finishMsg: "Portrait rendered \u2713",
     messages: [
@@ -35,6 +40,8 @@ const VARIANTS = {
       "Lighting the scene...",
       "Engraving panel typography...",
       "Polishing holographic accents...",
+      "Image service is rate-limited (~2 req/min) — hang tight...",
+      "Foundry image gen typically takes 3–6 minutes — still working...",
       "Final pass — sharpening details...",
     ],
   },
@@ -42,12 +49,13 @@ const VARIANTS = {
 
 const FADE_OUT_DELAY_MS = 600;
 
-export function CardGeneratingIndicator({ active, variant = "card" }: CardGeneratingIndicatorProps) {
+export function CardGeneratingIndicator({ active, variant = "card", queueInfo = null }: CardGeneratingIndicatorProps) {
   const cfg = VARIANTS[variant];
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState<string>(cfg.messages[0]);
   const [finishing, setFinishing] = useState(false);
   const [prevActive, setPrevActive] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const rafRef = useRef<number | null>(null);
   const messageIdxRef = useRef(0);
 
@@ -56,6 +64,7 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
     if (active) {
       setProgress(0);
       setFinishing(false);
+      setElapsedMs(0);
       setMessage(cfg.messages[0]);
     } else if (prevActive) {
       setProgress(100);
@@ -74,6 +83,7 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
       const t = Math.min(elapsed / cfg.durationMs, 1);
       const eased = 1 - Math.pow(1 - t, 3);
       setProgress(Math.round(eased * cfg.progressTarget));
+      setElapsedMs(elapsed);
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tick);
       }
@@ -100,6 +110,42 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
   }, [finishing]);
 
   if (!visible) return null;
+
+  // Queued state — overrides the regular running UI. The throttle queue is a
+  // server-side construct; show position + ETA so the user knows we haven't
+  // forgotten about them.
+  if (active && queueInfo) {
+    const etaMin = Math.floor(queueInfo.etaSec / 60);
+    const etaSec = queueInfo.etaSec % 60;
+    return (
+      <div className="mx-auto w-full max-w-sm transition-all duration-500 my-3 opacity-100">
+        <div className="compaction-terminal relative overflow-hidden rounded-lg border font-mono text-xs">
+          <div className="compaction-scanlines pointer-events-none absolute inset-0 z-10" />
+          <div className="flex items-center gap-2 border-b border-amber-900/50 bg-black/60 px-3 py-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-400 compaction-pulse" />
+            <span className="text-amber-300 tracking-wider text-[10px] uppercase font-bold">Queued</span>
+            <span className="ml-auto text-amber-800 text-[10px]">img.queue</span>
+          </div>
+          <div className="px-3 py-2.5 space-y-2 text-amber-200/90">
+            <div className="flex items-center gap-1.5">
+              <span className="text-amber-400 text-sm">{"\u23F3"}</span>
+              <span>
+                Position <span className="font-bold text-amber-100">{queueInfo.position}</span> in queue
+              </span>
+            </div>
+            <div className="text-[11px] text-amber-300/70">
+              We pace requests so the AI service doesn&apos;t get overwhelmed.
+              <br />
+              Starting in ~{etaMin > 0 ? `${etaMin}m ${etaSec.toString().padStart(2, "0")}s` : `${etaSec}s`}
+            </div>
+            <div className="text-[10px] text-amber-500/60 pt-0.5 border-t border-amber-900/30 mt-1">
+              Each card takes ~5 minutes once it starts.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const totalBlocks = 20;
   const filledBlocks = Math.round((progress / 100) * totalBlocks);
@@ -157,6 +203,14 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
                 {progress}%
               </span>
             </div>
+            {variant === "image" && active && (
+              <div className="flex justify-between text-[10px] text-violet-500/80 pt-0.5 border-t border-violet-900/30 mt-1">
+                <span className="tabular-nums">
+                  elapsed: {Math.floor(elapsedMs / 60000)}m {Math.floor((elapsedMs % 60000) / 1000).toString().padStart(2, "0")}s
+                </span>
+                <span>ETA ~5 min</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

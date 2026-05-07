@@ -34,6 +34,14 @@ SAMPLE_SYNTHESIS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_card_text_cache(tmp_path, monkeypatch):
+    """Each test gets its own empty card-text cache directory so cache hits
+    from one test don't leak into the next."""
+    from profile_agent.services import card_text_cache
+    monkeypatch.setattr(card_text_cache, "_CACHE_DIR", tmp_path / "card_text")
+
+
 @pytest.fixture
 def client():
     from profile_agent.api.auth import get_current_user
