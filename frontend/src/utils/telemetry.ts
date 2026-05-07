@@ -47,8 +47,6 @@ export async function initTelemetry(buildSha?: string, buildTag?: string): Promi
 
   let connectionString = "";
   let roleName = "profile-agent-frontend";
-  let appVersion = "";
-  let appGitTag = "";
   try {
     const res = await fetch("/api/telemetry/config");
     if (res.ok) {
@@ -56,8 +54,8 @@ export async function initTelemetry(buildSha?: string, buildTag?: string): Promi
       connectionString = cfg.connectionString ?? "";
       roleName = cfg.roleName ?? roleName;
       environmentCache = cfg.environment ?? environmentCache;
-      appVersion = cfg.appVersion ?? "";
-      appGitTag = cfg.appGitTag ?? "";
+      const appVersion = cfg.appVersion ?? "";
+      const appGitTag = cfg.appGitTag ?? "";
       // If the build didn't bake in a SHA, inherit the backend's app version
       // so frontend telemetry rows still carry a usable cloud_RoleVersion.
       if (!buildShaCache && appVersion) buildShaCache = appVersion;
