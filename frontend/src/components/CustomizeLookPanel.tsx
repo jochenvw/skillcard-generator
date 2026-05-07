@@ -161,6 +161,11 @@ export function CustomizeLookPanel({
       >
         {regenerating ? "⟳ Regenerating…" : "✨ Regenerate card"}
       </button>
+      <p className="text-[10px] text-zinc-500 leading-relaxed mt-1.5">
+        ⏱ Portrait generation takes <span className="text-zinc-400 font-medium">~5 minutes</span>.
+        The image service is rate-limited to <span className="text-zinc-400 font-medium">~2 requests/minute</span>,
+        so try not to spam the button.
+      </p>
     </div>
   );
 }

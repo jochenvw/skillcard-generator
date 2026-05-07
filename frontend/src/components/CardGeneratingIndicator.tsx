@@ -24,8 +24,10 @@ const VARIANTS = {
   image: {
     label: "Portrait Forge",
     procTag: "img.gen",
-    // Image generation is slow (~30-60s) — pace the bar accordingly
-    durationMs: 50000,
+    // Foundry image generation is throttled (~2 req/min) and a single render
+    // typically lands between 3 and 6 minutes. Pace the bar over 7 minutes so
+    // it doesn't sit pinned at 92% for ages.
+    durationMs: 420000,
     progressTarget: 92,
     finishMsg: "Portrait rendered \u2713",
     messages: [
@@ -35,6 +37,8 @@ const VARIANTS = {
       "Lighting the scene...",
       "Engraving panel typography...",
       "Polishing holographic accents...",
+      "Image service is rate-limited (~2 req/min) — hang tight...",
+      "Foundry image gen typically takes 3–6 minutes — still working...",
       "Final pass — sharpening details...",
     ],
   },
@@ -48,6 +52,7 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
   const [message, setMessage] = useState<string>(cfg.messages[0]);
   const [finishing, setFinishing] = useState(false);
   const [prevActive, setPrevActive] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const rafRef = useRef<number | null>(null);
   const messageIdxRef = useRef(0);
 
@@ -56,6 +61,7 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
     if (active) {
       setProgress(0);
       setFinishing(false);
+      setElapsedMs(0);
       setMessage(cfg.messages[0]);
     } else if (prevActive) {
       setProgress(100);
@@ -74,6 +80,7 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
       const t = Math.min(elapsed / cfg.durationMs, 1);
       const eased = 1 - Math.pow(1 - t, 3);
       setProgress(Math.round(eased * cfg.progressTarget));
+      setElapsedMs(elapsed);
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tick);
       }
@@ -157,6 +164,14 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
                 {progress}%
               </span>
             </div>
+            {variant === "image" && active && (
+              <div className="flex justify-between text-[10px] text-violet-500/80 pt-0.5 border-t border-violet-900/30 mt-1">
+                <span className="tabular-nums">
+                  elapsed: {Math.floor(elapsedMs / 60000)}m {Math.floor((elapsedMs % 60000) / 1000).toString().padStart(2, "0")}s
+                </span>
+                <span>ETA ~5 min</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

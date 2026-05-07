@@ -378,6 +378,9 @@ export function ChatPanel({
                   <span className="text-[10px] text-violet-400/70 font-mono uppercase tracking-wider">
                     ✨ Forging AI Portrait...
                   </span>
+                  <span className="text-[10px] text-violet-500/60 max-w-xs text-center leading-relaxed">
+                    Heads up: portraits typically take ~5 minutes. The image service is rate-limited to ~2 requests per minute, so feel free to grab a coffee ☕
+                  </span>
                 </div>
               ) : cardData && imageStatus === "error" ? (
                 <div className="flex flex-col items-center gap-2">
