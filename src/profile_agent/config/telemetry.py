@@ -70,15 +70,27 @@ def configure_telemetry(
 
 
 def instrument_app(app) -> None:  # noqa: ANN001 — FastAPI app type avoided to keep import light
-    """No-op when the distro is in use (it auto-instruments at configure time).
+    """Enable any extra instrumentation not auto-wired by the distro.
 
-    Kept for backward compatibility with callers that still invoke it.
+    The distro auto-instruments fastapi/httpx/requests/urllib via entry points
+    when configure_azure_monitor() runs. We additionally enable the OpenAI v2
+    instrumentor so LLM calls show up in App Insights with proper gen_ai.*
+    semantic attributes (model, input/output tokens, finish reasons) instead
+    of opaque HTTP dependency rows.
     """
     global _app_instrumented
     if _app_instrumented:
         return
     _app_instrumented = True
-    logger.debug("instrument_app() — distro auto-instrumentation already active")
+    try:
+        from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
+
+        OpenAIInstrumentor().instrument()
+        logger.info("OpenAI v2 instrumentation enabled (gen_ai.* semantic attributes on LLM dependency spans)")
+    except ImportError:
+        logger.warning("opentelemetry-instrumentation-openai-v2 not installed — LLM calls will appear as raw HTTP")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("OpenAI instrumentation failed: %s", e)
 
 
 def _setup_noop_providers(resource: Resource) -> None:
