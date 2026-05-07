@@ -29,17 +29,71 @@ ETA REPORTED TO CLIENT:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Awaitable, Callable
+from typing import Any
+
+from opentelemetry import metrics, trace
+from opentelemetry.trace import Link, SpanContext, SpanKind, Status, StatusCode
 
 from profile_agent.config.events import wide_event
 
 logger = logging.getLogger(__name__)
+
+# ── OpenTelemetry instrumentation ───────────────────────────────────────────
+# We follow the OTel messaging semantic conventions
+# (https://opentelemetry.io/docs/specs/semconv/messaging/) so APM tools can
+# render produce → process flows for each image job.
+#
+# Spans:
+#   image_queue.publish   kind=PRODUCER  emitted at enqueue()
+#   image_queue.process   kind=CONSUMER  emitted around the worker call;
+#                                        linked to the producer span so the
+#                                        async hop is visible in App Insights'
+#                                        end-to-end transaction view.
+#
+# Metrics (azure-monitor-opentelemetry exports these as customMetrics):
+#   image_queue.queue_wait_s    histogram (s)   how long jobs wait for admission
+#   image_queue.run_duration_s  histogram (s)   how long the worker took
+#   image_queue.depth           updown counter  current queue depth
+#   image_queue.in_flight       updown counter  current concurrency
+#   image_queue.jobs            counter         outcome-tagged job count
+_tracer = trace.get_tracer("profile_agent.image_queue")
+_meter = metrics.get_meter("profile_agent.image_queue")
+
+_metric_queue_wait = _meter.create_histogram(
+    "image_queue.queue_wait_s",
+    unit="s",
+    description="Time a job spent waiting in the throttle queue before admission",
+)
+_metric_run_duration = _meter.create_histogram(
+    "image_queue.run_duration_s",
+    unit="s",
+    description="Time the worker spent producing the image",
+)
+_metric_depth = _meter.create_up_down_counter(
+    "image_queue.depth",
+    unit="{job}",
+    description="Current depth of the throttle queue",
+)
+_metric_in_flight = _meter.create_up_down_counter(
+    "image_queue.in_flight",
+    unit="{job}",
+    description="Current number of in-flight image jobs",
+)
+_metric_jobs = _meter.create_counter(
+    "image_queue.jobs",
+    unit="{job}",
+    description="Image jobs by outcome (queued / completed / failed / cancelled / rejected)",
+)
+_MESSAGING_DESTINATION = "image-generation"
+_MESSAGING_SYSTEM = "image_queue"
 
 
 def _env_int(name: str, default: int) -> int:
@@ -103,6 +157,13 @@ class _Job:
     cache_key_prefix: str = ""
     # Owning task — kept so we can cancel on shutdown.
     task: asyncio.Task | None = field(default=None, repr=False)
+    # OpenTelemetry SpanContext from the producer (enqueue) span. The
+    # consumer span links to it so the async hop is visible end-to-end.
+    producer_span_context: SpanContext | None = field(default=None, repr=False)
+    # Hex trace id of the producer span — surfaced to the API client + in all
+    # wide events for this job so a support engineer can pivot from a job_id
+    # to the corresponding distributed trace in App Insights.
+    trace_id: str = ""
 
 
 class ImageQueue:
@@ -168,12 +229,12 @@ class ImageQueue:
             job.error = "server_shutdown"
             job.error_type = "shutdown"
             cancelled_queued += 1
+            _metric_depth.add(-1)
+            _metric_jobs.add(1, {"outcome": "cancelled", "reason": "shutdown"})
         # Cancel admitter.
         self._admitter_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await self._admitter_task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
         self._admitter_task = None
         # Wait briefly for in-flight tasks. Most image jobs run for minutes,
         # so we expect to cancel — drain time is intentionally short.
@@ -200,6 +261,7 @@ class ImageQueue:
     ) -> _Job:
         """Reject if queue is full or shutting down. Returns the created job."""
         if not self._accepting:
+            _metric_jobs.add(1, {"outcome": "rejected", "reason": "shutting_down"})
             raise QueueFullError(depth=0, retry_after_s=30)
         depth = self._queue.qsize()
         if depth >= MAX_DEPTH:
@@ -210,37 +272,66 @@ class ImageQueue:
                 queue_depth=depth,
                 in_flight=self._in_flight,
             )
+            _metric_jobs.add(1, {"outcome": "rejected", "reason": "queue_full"})
             raise QueueFullError(depth=depth, retry_after_s=max(1, int(ADMIT_INTERVAL_S * 2)))
 
         job_id = uuid.uuid4().hex
         position = depth + 1  # 1-indexed for display
-        job = _Job(
-            job_id=job_id,
-            user_hash=user_hash,
-            payload=payload,
-            enqueued_at=time.monotonic(),
-            enqueued_wall=datetime.now(UTC),
-            queue_position=position,
-            enqueue_in_flight=self._in_flight,
-            enqueue_depth=depth,
-            has_photo=has_photo,
-            cache_key_prefix=cache_key_prefix[:12],
-        )
-        self._jobs[job_id] = job
-        self._queue.put_nowait(job)
-        self._evict_expired()
-        wide_event(
-            "image_job.enqueued",
-            outcome="ok",
-            job_id=job_id,
-            queue_depth=position,
-            in_flight=self._in_flight,
-            queue_position=position,
-            estimated_wait_s=self.estimate_wait_s(position),
-            has_photo=has_photo,
-            cache_key_prefix=cache_key_prefix[:12] or None,
-        )
-        return job
+        # PRODUCER span — encloses the enqueue work and seeds trace context that
+        # the consumer span will link to. SpanKind.PRODUCER + messaging.* attrs
+        # follow the OpenTelemetry messaging semantic conventions.
+        with _tracer.start_as_current_span(
+            "image_queue.publish",
+            kind=SpanKind.PRODUCER,
+            attributes={
+                "messaging.system": _MESSAGING_SYSTEM,
+                "messaging.operation.type": "publish",
+                "messaging.operation.name": "publish",
+                "messaging.destination.name": _MESSAGING_DESTINATION,
+                "messaging.message.id": job_id,
+                "messaging.batch.message_count": 1,
+                "image_queue.position": position,
+                "image_queue.depth_after_publish": position,
+                "image_queue.in_flight": self._in_flight,
+                "image_queue.estimated_wait_s": self.estimate_wait_s(position),
+                "image_queue.has_photo": has_photo,
+            },
+        ) as span:
+            span_ctx = span.get_span_context()
+            trace_hex = format(span_ctx.trace_id, "032x") if span_ctx.is_valid else ""
+            job = _Job(
+                job_id=job_id,
+                user_hash=user_hash,
+                payload=payload,
+                enqueued_at=time.monotonic(),
+                enqueued_wall=datetime.now(UTC),
+                queue_position=position,
+                enqueue_in_flight=self._in_flight,
+                enqueue_depth=depth,
+                has_photo=has_photo,
+                cache_key_prefix=cache_key_prefix[:12],
+                producer_span_context=span_ctx if span_ctx.is_valid else None,
+                trace_id=trace_hex,
+            )
+            self._jobs[job_id] = job
+            self._queue.put_nowait(job)
+            _metric_depth.add(1)
+            _metric_jobs.add(1, {"outcome": "enqueued"})
+            self._evict_expired()
+            wide_event(
+                "image_job.enqueued",
+                outcome="ok",
+                job_id=job_id,
+                trace_id=trace_hex,
+                queue_depth=position,
+                in_flight=self._in_flight,
+                queue_position=position,
+                estimated_wait_s=self.estimate_wait_s(position),
+                has_photo=has_photo,
+                cache_key_prefix=cache_key_prefix[:12] or None,
+            )
+            span.set_status(Status(StatusCode.OK))
+            return job
 
     def status(self, job_id: str, user_hash: str) -> dict[str, Any] | None:
         job = self._jobs.get(job_id)
@@ -255,6 +346,8 @@ class ImageQueue:
             "queue_depth": self._queue.qsize(),
             "in_flight": self._in_flight,
         }
+        if job.trace_id:
+            out["trace_id"] = job.trace_id
         if job.state == STATE_QUEUED:
             out["queue_position"] = position
             out["estimated_wait_s"] = self.estimate_wait_s(position)
@@ -400,109 +493,174 @@ class ImageQueue:
         queue_wait_s = job.started_at - job.enqueued_at
         in_flight_after = MAX_INFLIGHT - self._sem._value  # type: ignore[attr-defined]
         self._in_flight = in_flight_after
-        wide_event(
-            "image_job.admitted",
-            outcome="ok",
-            job_id=job.job_id,
-            queue_wait_s=round(queue_wait_s, 2),
-            queue_depth_at_admit=self._queue.qsize(),
-            in_flight_after=in_flight_after,
-            has_photo=job.has_photo,
-        )
-        try:
-            assert self._worker is not None  # noqa: S101
-            result = await asyncio.wait_for(self._worker(job.payload), timeout=JOB_HARD_TIMEOUT_S)
-            job.finished_at = time.monotonic()
-            run_s = job.finished_at - (job.started_at or job.finished_at)
-            total_s = job.finished_at - job.enqueued_at
-            if result and "base64" in result:
-                job.state = STATE_DONE
-                job.result = result
-                wide_event(
-                    "image_job.completed",
-                    outcome="ok",
-                    job_id=job.job_id,
-                    queue_wait_s=round(queue_wait_s, 2),
-                    run_s=round(run_s, 2),
-                    total_s=round(total_s, 2),
-                )
-            elif result and result.get("error") == "rate_limited":
-                ra = result.get("retry_after")
-                if isinstance(ra, (int, float)) and ra > 0:
-                    self.pause_admission(float(ra), reason="upstream_429")
-                    job.retry_after = int(ra)
+        _metric_depth.add(-1)
+        _metric_in_flight.add(1)
+        _metric_queue_wait.record(queue_wait_s, {"has_photo": str(job.has_photo).lower()})
+
+        # CONSUMER span linked to the producer span so the async hop renders
+        # as a connected end-to-end transaction in App Insights.
+        links = []
+        if job.producer_span_context is not None:
+            links.append(Link(job.producer_span_context))
+
+        with _tracer.start_as_current_span(
+            "image_queue.process",
+            kind=SpanKind.CONSUMER,
+            links=links,
+            attributes={
+                "messaging.system": _MESSAGING_SYSTEM,
+                "messaging.operation.type": "process",
+                "messaging.operation.name": "process",
+                "messaging.destination.name": _MESSAGING_DESTINATION,
+                "messaging.message.id": job.job_id,
+                "image_queue.queue_wait_s": round(queue_wait_s, 3),
+                "image_queue.queue_depth_at_admit": self._queue.qsize(),
+                "image_queue.in_flight_after": in_flight_after,
+                "image_queue.has_photo": job.has_photo,
+                "image_queue.producer_trace_id": job.trace_id,
+            },
+        ) as span:
+            wide_event(
+                "image_job.admitted",
+                outcome="ok",
+                job_id=job.job_id,
+                trace_id=job.trace_id,
+                queue_wait_s=round(queue_wait_s, 2),
+                queue_depth_at_admit=self._queue.qsize(),
+                in_flight_after=in_flight_after,
+                has_photo=job.has_photo,
+            )
+            try:
+                assert self._worker is not None  # noqa: S101
+                result = await asyncio.wait_for(self._worker(job.payload), timeout=JOB_HARD_TIMEOUT_S)
+                job.finished_at = time.monotonic()
+                run_s = job.finished_at - (job.started_at or job.finished_at)
+                total_s = job.finished_at - job.enqueued_at
+                _metric_run_duration.record(run_s, {"outcome": "ok" if result and "base64" in result else "error"})
+                if result and "base64" in result:
+                    job.state = STATE_DONE
+                    job.result = result
+                    span.set_attribute("image_queue.outcome", "completed")
+                    span.set_attribute("image_queue.run_s", round(run_s, 3))
+                    span.set_attribute("image_queue.total_s", round(total_s, 3))
+                    span.set_status(Status(StatusCode.OK))
+                    _metric_jobs.add(1, {"outcome": "completed"})
+                    wide_event(
+                        "image_job.completed",
+                        outcome="ok",
+                        job_id=job.job_id,
+                        trace_id=job.trace_id,
+                        queue_wait_s=round(queue_wait_s, 2),
+                        run_s=round(run_s, 2),
+                        total_s=round(total_s, 2),
+                    )
+                elif result and result.get("error") == "rate_limited":
+                    ra = result.get("retry_after")
+                    if isinstance(ra, (int, float)) and ra > 0:
+                        self.pause_admission(float(ra), reason="upstream_429")
+                        job.retry_after = int(ra)
+                    job.state = STATE_FAILED
+                    job.error = "rate_limited"
+                    job.error_type = "rate_limited"
+                    span.set_attribute("image_queue.outcome", "rate_limited")
+                    span.set_attribute("image_queue.retry_after_s", job.retry_after or 0)
+                    span.set_status(Status(StatusCode.ERROR, "upstream rate limited"))
+                    _metric_jobs.add(1, {"outcome": "failed", "error_type": "rate_limited"})
+                    wide_event(
+                        "image_job.failed",
+                        outcome="error",
+                        level=logging.WARNING,
+                        job_id=job.job_id,
+                        trace_id=job.trace_id,
+                        error_type="rate_limited",
+                        retry_after_s=job.retry_after,
+                        queue_wait_s=round(queue_wait_s, 2),
+                        run_s=round(run_s, 2),
+                    )
+                else:
+                    err_kind = (result or {}).get("error", "generation_failed") if result else "no_image"
+                    job.state = STATE_FAILED
+                    job.error = str(err_kind)[:500]
+                    job.error_type = "generation_failed"
+                    span.set_attribute("image_queue.outcome", "failed")
+                    span.set_attribute("image_queue.error_type", str(err_kind)[:100])
+                    span.set_status(Status(StatusCode.ERROR, str(err_kind)[:200]))
+                    _metric_jobs.add(1, {"outcome": "failed", "error_type": "generation_failed"})
+                    wide_event(
+                        "image_job.failed",
+                        outcome="error",
+                        level=logging.ERROR,
+                        job_id=job.job_id,
+                        trace_id=job.trace_id,
+                        error_type=str(err_kind)[:100],
+                        queue_wait_s=round(queue_wait_s, 2),
+                        run_s=round(run_s, 2),
+                    )
+            except TimeoutError as exc:
+                job.finished_at = time.monotonic()
                 job.state = STATE_FAILED
-                job.error = "rate_limited"
-                job.error_type = "rate_limited"
-                wide_event(
-                    "image_job.failed",
-                    outcome="error",
-                    level=logging.WARNING,
-                    job_id=job.job_id,
-                    error_type="rate_limited",
-                    retry_after_s=job.retry_after,
-                    queue_wait_s=round(queue_wait_s, 2),
-                    run_s=round(run_s, 2),
-                )
-            else:
-                err_kind = (result or {}).get("error", "generation_failed") if result else "no_image"
-                job.state = STATE_FAILED
-                job.error = str(err_kind)[:500]
-                job.error_type = "generation_failed"
+                job.error = f"image generation exceeded {JOB_HARD_TIMEOUT_S}s timeout"
+                job.error_type = "TimeoutError"
+                run_s = job.finished_at - (job.started_at or job.finished_at)
+                _metric_run_duration.record(run_s, {"outcome": "timeout"})
+                _metric_jobs.add(1, {"outcome": "failed", "error_type": "TimeoutError"})
+                span.record_exception(exc)
+                span.set_attribute("image_queue.outcome", "timeout")
+                span.set_status(Status(StatusCode.ERROR, "worker timeout"))
                 wide_event(
                     "image_job.failed",
                     outcome="error",
                     level=logging.ERROR,
                     job_id=job.job_id,
-                    error_type=str(err_kind)[:100],
-                    queue_wait_s=round(queue_wait_s, 2),
+                    trace_id=job.trace_id,
+                    error_type="TimeoutError",
                     run_s=round(run_s, 2),
                 )
-        except asyncio.TimeoutError:
-            job.finished_at = time.monotonic()
-            job.state = STATE_FAILED
-            job.error = f"image generation exceeded {JOB_HARD_TIMEOUT_S}s timeout"
-            job.error_type = "TimeoutError"
-            wide_event(
-                "image_job.failed",
-                outcome="error",
-                level=logging.ERROR,
-                job_id=job.job_id,
-                error_type="TimeoutError",
-                run_s=round(job.finished_at - (job.started_at or job.finished_at), 2),
-            )
-            logger.error("image job %s timed out after %ds", job.job_id, JOB_HARD_TIMEOUT_S)
-        except asyncio.CancelledError:
-            job.finished_at = time.monotonic()
-            job.state = STATE_CANCELLED
-            job.error = "cancelled"
-            job.error_type = "cancelled"
-            wide_event(
-                "image_job.cancelled",
-                outcome="error",
-                level=logging.WARNING,
-                job_id=job.job_id,
-                reason="task_cancelled",
-            )
-            raise
-        except Exception as exc:  # noqa: BLE001
-            job.finished_at = time.monotonic()
-            job.state = STATE_FAILED
-            job.error = str(exc)[:500]
-            job.error_type = type(exc).__name__
-            wide_event(
-                "image_job.failed",
-                outcome="error",
-                level=logging.ERROR,
-                job_id=job.job_id,
-                error_type=type(exc).__name__,
-                error_message=str(exc)[:500],
-                run_s=round((job.finished_at or 0) - (job.started_at or 0), 2),
-            )
-            logger.exception("image job %s failed", job.job_id)
-        finally:
-            self._sem.release()
-            self._in_flight = max(0, MAX_INFLIGHT - self._sem._value)  # type: ignore[attr-defined]
+                logger.error("image job %s timed out after %ds", job.job_id, JOB_HARD_TIMEOUT_S)
+            except asyncio.CancelledError:
+                job.finished_at = time.monotonic()
+                job.state = STATE_CANCELLED
+                job.error = "cancelled"
+                job.error_type = "cancelled"
+                _metric_jobs.add(1, {"outcome": "cancelled"})
+                span.set_attribute("image_queue.outcome", "cancelled")
+                span.set_status(Status(StatusCode.ERROR, "cancelled"))
+                wide_event(
+                    "image_job.cancelled",
+                    outcome="error",
+                    level=logging.WARNING,
+                    job_id=job.job_id,
+                    trace_id=job.trace_id,
+                    reason="task_cancelled",
+                )
+                raise
+            except Exception as exc:  # noqa: BLE001
+                job.finished_at = time.monotonic()
+                job.state = STATE_FAILED
+                job.error = str(exc)[:500]
+                job.error_type = type(exc).__name__
+                run_s = (job.finished_at or 0) - (job.started_at or 0)
+                _metric_run_duration.record(run_s, {"outcome": "error"})
+                _metric_jobs.add(1, {"outcome": "failed", "error_type": type(exc).__name__})
+                span.record_exception(exc)
+                span.set_attribute("image_queue.outcome", "failed")
+                span.set_attribute("image_queue.error_type", type(exc).__name__)
+                span.set_status(Status(StatusCode.ERROR, str(exc)[:200]))
+                wide_event(
+                    "image_job.failed",
+                    outcome="error",
+                    level=logging.ERROR,
+                    job_id=job.job_id,
+                    trace_id=job.trace_id,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc)[:500],
+                    run_s=round(run_s, 2),
+                )
+                logger.exception("image job %s failed", job.job_id)
+            finally:
+                self._sem.release()
+                self._in_flight = max(0, MAX_INFLIGHT - self._sem._value)  # type: ignore[attr-defined]
+                _metric_in_flight.add(-1)
 
 
 # Module-level singleton. ``maxReplicas=1`` + single uvicorn worker are
