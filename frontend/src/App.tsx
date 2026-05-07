@@ -9,7 +9,7 @@ import type { CardData, StateUpdate, ClientSession, CardStyle } from "./types";
 import { EMPTY_CARD_STYLE } from "./types";
 import type { StrengthsResponse } from "./utils/strengthsClient";
 import { createLogger } from "./utils/logger";
-import { apiFetch, startHeartbeat, trackEvent } from "./utils/telemetry";
+import { apiFetch, startHeartbeat, trackEvent, getAppVersion, getAppGitTag } from "./utils/telemetry";
 import { useToast } from "./components/Toast";
 
 const log = createLogger("app");
@@ -791,7 +791,9 @@ export default function App() {
           <h1 className="text-sm font-mono text-cyan-400/80 tracking-tight">
             <span className="text-zinc-500">skill-deck</span>
             <span className="text-zinc-600">@</span>
-            <span className="text-zinc-500">v0.1</span>
+            <span className="text-zinc-500" title={getAppGitTag() || getAppVersion() || "dev"}>
+              {getAppGitTag() || (getAppVersion() ? getAppVersion().slice(0, 7) : "dev")}
+            </span>
             <span className="text-zinc-600 mx-1">~/</span>
             <span className="text-cyan-400/90">interview</span>
             <span className="terminal-cursor text-cyan-400 ml-0.5">▌</span>

@@ -30,6 +30,15 @@ export function getAppInsights(): ApplicationInsights | null {
   return appInsights;
 }
 
+/** Resolved app version (short git SHA) — populated after initTelemetry(). Empty until init completes. */
+export function getAppVersion(): string {
+  return buildShaCache;
+}
+
+export function getAppGitTag(): string {
+  return buildTagCache;
+}
+
 export async function initTelemetry(buildSha?: string, buildTag?: string): Promise<void> {
   if (initialized) return;
   initialized = true;
