@@ -11,6 +11,13 @@ import type { StrengthsResponse } from "./utils/strengthsClient";
 import { createLogger } from "./utils/logger";
 import { apiFetch, startHeartbeat, trackEvent, getAppVersion, getAppGitTag } from "./utils/telemetry";
 import { useToast } from "./components/Toast";
+import { GalleryModal } from "./components/GalleryModal";
+import {
+  saveCard as saveGalleryCard,
+  importCards as importGalleryCards,
+  listCards as listGalleryCards,
+  type GalleryCard,
+} from "./utils/cardGallery";
 
 const log = createLogger("app");
 
@@ -52,7 +59,6 @@ export default function App() {
     updateSession,
     handleStateUpdate,
     resetSession,
-    exportSession,
     consumeFreshFlag,
   } = useLocalSession();
   const { user, getAuthHeaders, signOut } = useAuth();
@@ -132,6 +138,23 @@ export default function App() {
       log.warn("Could not cache card image to localStorage", err);
     }
   }, []);
+
+  // ── Gallery (IndexedDB) ─────────────────────────────────────────────────
+  // Refs so persistCardToGallery always sees latest cardData/style without
+  // creating new closures every render (and avoiding extra deps in the
+  // ~4 image-success callsites).
+  const cardDataRef = useRef<CardData | null>(null);
+  const styleRef = useRef<CardStyle | null>(null);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const persistCardToGallery = useCallback((imageDataUrl: string) => {
+    const cd = cardDataRef.current;
+    if (!cd || !imageDataUrl) return;
+    void saveGalleryCard({
+      cardData: cd,
+      style: styleRef.current,
+      imageDataUrl,
+    });
+  }, []);
   const [compacting, setCompacting] = useState(false);
 
   // Track whether the next send should include hasImage
@@ -147,6 +170,14 @@ export default function App() {
   useEffect(() => {
     startHeartbeat(() => sessionIdRef.current);
   }, []);
+
+  // Keep refs in sync for gallery persistence callsites.
+  useEffect(() => {
+    cardDataRef.current = cardData;
+  }, [cardData]);
+  useEffect(() => {
+    styleRef.current = session?.style ?? null;
+  }, [session?.style]);
 
   // ── Funnel telemetry ────────────────────────────────────────────────────
   // session.started fires exactly once per fresh session creation (no prior
@@ -206,9 +237,12 @@ export default function App() {
         if (imgBody.cardImage?.url) {
           setCardImageSrc(imgBody.cardImage.url);
           finishImageGeneration("ready");
+          persistCardToGallery(imgBody.cardImage.url);
         } else if (imgBody.cardImage?.base64) {
-          setCardImageSrc(`data:image/png;base64,${imgBody.cardImage.base64}`);
+          const dataUrl = `data:image/png;base64,${imgBody.cardImage.base64}`;
+          setCardImageSrc(dataUrl);
           finishImageGeneration("ready");
+          persistCardToGallery(dataUrl);
         } else {
           finishImageGeneration("error", "Demo portrait was not produced.");
         }
@@ -350,12 +384,16 @@ export default function App() {
         if (startBody.state === "done" && startBody.result) {
           const totalImageMs = Math.round(performance.now() - t0);
           log.info("regenerate ✓ image (cache)", { totalMs: totalImageMs });
+          let dataUrl: string | null = null;
           if (startBody.result.base64) {
-            setCardImageSrc(`data:image/png;base64,${startBody.result.base64}`);
+            dataUrl = `data:image/png;base64,${startBody.result.base64}`;
+            setCardImageSrc(dataUrl);
           } else if (startBody.result.url) {
-            setCardImageSrc(startBody.result.url);
+            dataUrl = startBody.result.url;
+            setCardImageSrc(dataUrl);
           }
           finishImageGeneration("ready");
+          if (dataUrl) persistCardToGallery(dataUrl);
           imageOutcome = "ready";
         } else if (startBody.job_id) {
           const jobId = startBody.job_id;
@@ -412,12 +450,16 @@ export default function App() {
             if (pollBody.state === "done" && pollBody.result) {
               const totalImageMs = Math.round(performance.now() - pollStart);
               log.info("regenerate ✓ image (job)", { jobId, polls: pollCount, totalMs: totalImageMs });
+              let dataUrl: string | null = null;
               if (pollBody.result.url) {
-                setCardImageSrc(pollBody.result.url);
+                dataUrl = pollBody.result.url;
+                setCardImageSrc(dataUrl);
               } else if (pollBody.result.base64) {
-                setCardImageSrc(`data:image/png;base64,${pollBody.result.base64}`);
+                dataUrl = `data:image/png;base64,${pollBody.result.base64}`;
+                setCardImageSrc(dataUrl);
               }
               finishImageGeneration("ready");
+              if (dataUrl) persistCardToGallery(dataUrl);
               imageOutcome = "ready";
               break;
             }
@@ -500,7 +542,7 @@ export default function App() {
     } finally {
       setRegenerating(false);
     }
-  }, [session, regenerating, getAuthHeaders, updateSession, setCardImageSrc, startImageGeneration, finishImageGeneration, toast]);
+  }, [session, regenerating, getAuthHeaders, updateSession, setCardImageSrc, startImageGeneration, finishImageGeneration, toast, persistCardToGallery]);
 
   // Expose for quick manual triggering from devtools.
   const regenerateCardRef = useRef<(() => void) | null>(null);
@@ -634,9 +676,12 @@ export default function App() {
                   if (img.url) {
                     setCardImageSrc(img.url);
                     finishImageGeneration("ready");
+                    persistCardToGallery(img.url);
                   } else if (img.base64) {
-                    setCardImageSrc(`data:image/png;base64,${img.base64}`);
+                    const dataUrl = `data:image/png;base64,${img.base64}`;
+                    setCardImageSrc(dataUrl);
                     finishImageGeneration("ready");
+                    persistCardToGallery(dataUrl);
                   } else {
                     finishImageGeneration(
                       "error",
@@ -726,7 +771,7 @@ export default function App() {
         setIsStreaming(false);
       }
     },
-    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData, getAuthHeaders, setCardImageSrc, imageStatus, startImageGeneration, finishImageGeneration],
+    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData, getAuthHeaders, setCardImageSrc, imageStatus, startImageGeneration, finishImageGeneration, persistCardToGallery],
   );
 
   // ── Photo selected in ChatPanel ─────────────────────────────────────────
@@ -802,19 +847,29 @@ export default function App() {
     ]);
   }, []);
 
-  // ── Export session (instrumented wrapper) ───────────────────────────────
-  const handleExport = useCallback(() => {
-    if (session) {
-      trackEvent("session.exported", {
-        session_id: session.sessionId,
-        current_stage: session.currentStageId,
-        completed_count: String(session.completedStages.length),
-        has_card_data: String(Boolean(session.cardData)),
-        has_image: String(Boolean(cardImageSrc)),
-      });
-    }
-    exportSession();
-  }, [session, cardImageSrc, exportSession]);
+  // ── Export session (with gallery embedded) ──────────────────────────────
+  const handleExport = useCallback(async () => {
+    if (!session) return;
+    const cards = await listGalleryCards();
+    trackEvent("session.exported", {
+      session_id: session.sessionId,
+      current_stage: session.currentStageId,
+      completed_count: String(session.completedStages.length),
+      has_card_data: String(Boolean(session.cardData)),
+      has_image: String(Boolean(cardImageSrc)),
+      gallery_count: String(cards.length),
+    });
+    const payload = { ...session, gallery: cards };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `skillcard-session-${session.sessionId.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [session, cardImageSrc]);
 
   // ── Import session from JSON file ───────────────────────────────────────
   const handleImport = useCallback(() => {
@@ -829,8 +884,8 @@ export default function App() {
       }
       try {
         const raw = await file.text();
-        const imported = JSON.parse(raw) as ClientSession;
-        if (!imported.sessionId || !imported.currentStageId) {
+        const parsed = JSON.parse(raw) as ClientSession & { gallery?: GalleryCard[] };
+        if (!parsed.sessionId || !parsed.currentStageId) {
           trackEvent("session.import_failed", {
             reason: "invalid_schema",
             file_size: String(file.size),
@@ -838,23 +893,34 @@ export default function App() {
           toast.error("Invalid session file.");
           return;
         }
+        const galleryCards = Array.isArray(parsed.gallery) ? parsed.gallery : [];
+        // Strip gallery before persisting so it doesn't pollute session storage.
+        const { gallery: _gallery, ...imported } = parsed;
+        void _gallery;
         if (!Array.isArray(imported.cliftonStrengths)) {
           imported.cliftonStrengths = [];
         }
-        updateSession(imported);
+        updateSession(imported as ClientSession);
         setMessages(toUIMessages(imported.currentStageMessages));
         setCardData(imported.cardData);
         setCardImageSrc(null);
         clearImageTimeout();
         setImageStatus("idle");
         setImageError(null);
+        const importedCount = galleryCards.length
+          ? await importGalleryCards(galleryCards)
+          : 0;
         trackEvent("session.imported", {
           session_id: imported.sessionId,
           current_stage: imported.currentStageId,
           completed_count: String(imported.completedStages?.length ?? 0),
           has_card_data: String(Boolean(imported.cardData)),
           file_size: String(file.size),
+          gallery_imported: String(importedCount),
         });
+        if (importedCount > 0) {
+          toast.success(`Imported session and ${importedCount} saved card${importedCount === 1 ? "" : "s"}.`);
+        }
       } catch (e) {
         trackEvent("session.import_failed", {
           reason: "parse_error",
@@ -892,6 +958,19 @@ export default function App() {
       updateSession({ style: next });
     },
     [updateSession],
+  );
+
+  // ── Gallery restore: replace the visible card with a previously saved one.
+  const handleGalleryRestore = useCallback(
+    (card: GalleryCard) => {
+      setCardData(card.cardData);
+      updateSession({ cardData: card.cardData, style: card.style ?? EMPTY_CARD_STYLE });
+      setCardImageSrc(card.imageDataUrl);
+      clearImageTimeout();
+      setImageStatus("ready");
+      setImageError(null);
+    },
+    [updateSession, setCardImageSrc, clearImageTimeout],
   );
 
   // ── Loading state ───────────────────────────────────────────────────────
@@ -962,6 +1041,20 @@ export default function App() {
                 </svg>
               </button>
             )}
+
+            {/* Gallery */}
+            <button
+              onClick={() => setGalleryOpen(true)}
+              title="Gallery (saved cards)"
+              className="rounded-lg p-1.5 text-zinc-500 hover:text-cyan-300 hover:bg-zinc-800 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+              </svg>
+            </button>
 
             {/* Export */}
             <button
@@ -1049,6 +1142,12 @@ export default function App() {
       <div className="fixed bottom-2 right-2 font-mono text-[10px] text-zinc-600 opacity-50 hover:opacity-100 transition-opacity select-none pointer-events-auto z-50">
         {__GIT_TAG__ ? `${__GIT_TAG__} · ${__GIT_SHA__}` : __GIT_SHA__}
       </div>
+      {/* Gallery modal */}
+      <GalleryModal
+        open={galleryOpen}
+        onClose={() => setGalleryOpen(false)}
+        onRestore={handleGalleryRestore}
+      />
     </div>
   );
 }
