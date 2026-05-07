@@ -832,48 +832,64 @@ def format_bullets(items: list[str]) -> str:
 # Default tokens — used when the user does not customize. These exact strings
 # are what produced the "current look" before the customization feature, so
 # any test that pins the no-style output should compare against them.
-_DEFAULT_DESIGN_LINES = (
+# Design blocks use an {accent} placeholder so a user-chosen accent color can be
+# merged into the preset's accent line, preserving the surrounding texture
+# (e.g. "rain-slick reflections", "starburst foil shimmer", "enchanted runes").
+_DEFAULT_DESIGN_TEMPLATE = (
     "- metallic sci-fi frame with beveled edges\n"
     "- layered UI panels with depth and shadows\n"
-    "- blue and cyan glowing accents\n"
+    "- {accent} glowing accents\n"
     "- polished, sharp, AAA game UI quality\n"
     "- high contrast, crisp edges, no blur"
 )
-_DEFAULT_ACCENT_LINE = "- blue and cyan glowing accents"
+_DEFAULT_ACCENT = "blue and cyan"
 _DEFAULT_STYLE_LINE = (
     "Style: clean structured UI, resembles a collectible card game interface, "
     "precise alignment, symmetrical layout, subtle gradients and metallic textures."
 )
 
-# Maps for known presets. Unknown values fall back to defaults (no-op).
-_STYLE_PRESET_DESIGN: dict[str, str] = {
+# Maps for known presets. Each entry is (design_template, default_accent).
+# Unknown values fall back to defaults (no-op).
+_STYLE_PRESET_DESIGN: dict[str, tuple[str, str]] = {
     "Cyberpunk Neon": (
-        "- glitch-neon frame with chromatic aberration edges\n"
-        "- layered UI panels lit by hot magenta and electric cyan signage\n"
-        "- neon glow accents bleeding into rain-slick reflections\n"
-        "- gritty cyberpunk holo-overlays, scanlines, AAA game UI quality\n"
-        "- high contrast, crisp edges, no blur"
+        (
+            "- glitch-neon frame with chromatic aberration edges\n"
+            "- layered UI panels lit by hot magenta and electric cyan signage\n"
+            "- {accent} glow accents bleeding into rain-slick reflections\n"
+            "- gritty cyberpunk holo-overlays, scanlines, AAA game UI quality\n"
+            "- high contrast, crisp edges, no blur"
+        ),
+        "neon",
     ),
     "Pokémon TCG": (
-        "- glossy holofoil frame in classic trading-card-game proportions\n"
-        "- bold yellow border with energy-type icon corners\n"
-        "- bright primary-color accents and starburst foil shimmer\n"
-        "- clean cartoon-illustration UI, AAA card-game quality\n"
-        "- high contrast, crisp edges, no blur"
+        (
+            "- glossy holofoil frame in classic trading-card-game proportions\n"
+            "- bold yellow border with energy-type icon corners\n"
+            "- {accent} accents with starburst foil shimmer\n"
+            "- clean cartoon-illustration UI, AAA card-game quality\n"
+            "- high contrast, crisp edges, no blur"
+        ),
+        "bright primary-color",
     ),
     "Fantasy Trading Card": (
-        "- ornate gold-filigree frame with hand-painted parchment panels\n"
-        "- engraved scrollwork dividers and gemstone inlays at corners\n"
-        "- warm amber and emerald glowing accents like enchanted runes\n"
-        "- painterly fantasy-art UI, AAA collectible-card quality\n"
-        "- high contrast, crisp edges, no blur"
+        (
+            "- ornate gold-filigree frame with hand-painted parchment panels\n"
+            "- engraved scrollwork dividers and gemstone inlays at corners\n"
+            "- {accent} glowing accents like enchanted runes\n"
+            "- painterly fantasy-art UI, AAA collectible-card quality\n"
+            "- high contrast, crisp edges, no blur"
+        ),
+        "warm amber and emerald",
     ),
     "Vaporwave": (
-        "- pastel chrome frame with retro grid horizon lines\n"
-        "- layered UI panels in soft pink, lavender, and teal\n"
-        "- glowing magenta and cyan sunset-gradient accents\n"
-        "- 80s-anime VHS aesthetic UI, AAA card-game quality\n"
-        "- high contrast, crisp edges, no blur"
+        (
+            "- pastel chrome frame with retro grid horizon lines\n"
+            "- layered UI panels in soft pink, lavender, and teal\n"
+            "- glowing {accent} sunset-gradient accents\n"
+            "- 80s-anime VHS aesthetic UI, AAA card-game quality\n"
+            "- high contrast, crisp edges, no blur"
+        ),
+        "magenta and cyan",
     ),
 }
 
@@ -945,28 +961,18 @@ def _build_card_image_prompt(card_data: dict, style: "CardStyle | None" = None) 
     persona = (getattr(style, "persona_setting", None) or "").strip()
     accent_color = (getattr(style, "accent_color", None) or "").strip()
 
-    # Design block: swap entire block for known non-default presets.
+    # Design block: pick the preset's template + default accent (or the default
+    # block). The user-chosen accent_color, if any, overrides the default accent
+    # while preserving the surrounding texture words from the template.
     if style_preset and style_preset != "Futuristic Metallic" and style_preset in _STYLE_PRESET_DESIGN:
-        design_block = _STYLE_PRESET_DESIGN[style_preset]
+        design_template, default_accent = _STYLE_PRESET_DESIGN[style_preset]
         outro_style_line = _STYLE_PRESET_OUTRO[style_preset]
     else:
-        design_block = _DEFAULT_DESIGN_LINES
+        design_template, default_accent = _DEFAULT_DESIGN_TEMPLATE, _DEFAULT_ACCENT
         outro_style_line = _DEFAULT_STYLE_LINE
 
-    # Accent color: replace the design-block bullet that mentions "accents"
-    # (works for the default block and every preset block — they all have
-    # exactly one such line as the 3rd bullet).
-    if accent_color:
-        accent_line = f"- {accent_color} glowing accents"
-        new_lines = []
-        replaced = False
-        for line in design_block.split("\n"):
-            if not replaced and "accents" in line.lower():
-                new_lines.append(accent_line)
-                replaced = True
-            else:
-                new_lines.append(line)
-        design_block = "\n".join(new_lines)
+    effective_accent = accent_color or default_accent
+    design_block = design_template.format(accent=effective_accent)
 
     # Portrait persona line.
     if persona and persona != "Professional" and persona in _PERSONA_PORTRAIT:

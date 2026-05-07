@@ -121,12 +121,14 @@ class TestAccentColor:
         assert "- blue and cyan glowing accents" not in out
 
     def test_accent_color_with_preset(self):
-        # The accent color line replacement should also apply within preset blocks.
+        # User-chosen accent should be merged into the preset's accent line,
+        # preserving the surrounding texture (e.g. rain-slick reflections).
         out = _build_card_image_prompt(
             SAMPLE_CARD,
             CardStyle(style_preset="Cyberpunk Neon", accent_color="#ff00aa"),
         )
-        assert "- #ff00aa glowing accents" in out
+        assert "- #ff00aa glow accents bleeding into rain-slick reflections" in out
+        assert "- neon glow accents" not in out
 
     def test_empty_accent_color_is_noop(self):
         out = _build_card_image_prompt(SAMPLE_CARD, CardStyle(accent_color=""))
