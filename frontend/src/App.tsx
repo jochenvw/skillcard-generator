@@ -9,7 +9,7 @@ import type { CardData, StateUpdate, ClientSession, CardStyle } from "./types";
 import { EMPTY_CARD_STYLE } from "./types";
 import type { StrengthsResponse } from "./utils/strengthsClient";
 import { createLogger } from "./utils/logger";
-import { apiFetch, trackEvent } from "./utils/telemetry";
+import { apiFetch, startHeartbeat, trackEvent } from "./utils/telemetry";
 import { useToast } from "./components/Toast";
 
 const log = createLogger("app");
@@ -127,6 +127,17 @@ export default function App() {
 
   // Track whether the next send should include hasImage
   const hasImageRef = useRef(false);
+
+  // Per-tab heartbeat → backend → App Insights so we can compute concurrent
+  // active users via dcount(client_id) in KQL. Started once at mount; the
+  // current sessionId is read fresh on each tick.
+  const sessionIdRef = useRef<string | undefined>(session?.sessionId);
+  useEffect(() => {
+    sessionIdRef.current = session?.sessionId;
+  }, [session?.sessionId]);
+  useEffect(() => {
+    startHeartbeat(() => sessionIdRef.current);
+  }, []);
 
   // ── /demo route — fetch a pre-baked persona + generated card image ──────
   const demoFetchedRef = useRef(false);

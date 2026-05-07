@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 
+from profile_agent.config.events import wide_event
 from profile_agent.config.settings import Settings, get_settings
 
 router = APIRouter(prefix="/api/telemetry", tags=["telemetry"])
@@ -24,3 +25,17 @@ async def telemetry_config(settings: Settings = Depends(get_settings)) -> dict[s
         "roleName": "profile-agent-frontend",
         "environment": settings.environment.value,
     }
+
+
+@router.post("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+async def heartbeat() -> Response:
+    """Per-tab heartbeat ping used to compute concurrent active users.
+
+    The frontend posts every ~30s while the tab is visible. We emit a
+    ``session.heartbeat`` wide event carrying the request-context client_id /
+    session_id / user_id (set by RequestContextMiddleware from request headers)
+    so KQL can dcount() distinct callers per bin to estimate concurrency.
+    """
+    wide_event("session.heartbeat")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+

@@ -189,3 +189,50 @@ export async function apiFetch(
   return res;
 }
 
+// ── Per-tab heartbeat ───────────────────────────────────────────────────────
+
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let heartbeatVisListener: (() => void) | null = null;
+let heartbeatGetSessionId: (() => string | undefined) | null = null;
+
+/**
+ * Start a periodic heartbeat ping while the tab is visible. Used to compute
+ * concurrent active users via dcount(client_id) over small time bins in KQL.
+ *
+ * Idempotent — calling twice replaces the previous getSessionId callback but
+ * does not start a second timer.
+ */
+export function startHeartbeat(getSessionId: () => string | undefined, intervalMs = 30_000): void {
+  heartbeatGetSessionId = getSessionId;
+  if (heartbeatTimer) return; // already running
+
+  const tick = () => {
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    const sid = heartbeatGetSessionId?.();
+    // Fire and forget — failures are non-critical and already tracked by apiFetch.
+    apiFetch("/api/telemetry/heartbeat", { method: "POST" }, { sessionId: sid }).catch(() => {});
+  };
+
+  // Send one immediately so a freshly-loaded tab is counted right away.
+  tick();
+  heartbeatTimer = setInterval(tick, intervalMs);
+
+  if (typeof document !== "undefined") {
+    heartbeatVisListener = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", heartbeatVisListener);
+  }
+}
+
+export function stopHeartbeat(): void {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  if (heartbeatVisListener && typeof document !== "undefined") {
+    document.removeEventListener("visibilitychange", heartbeatVisListener);
+    heartbeatVisListener = null;
+  }
+}
+
