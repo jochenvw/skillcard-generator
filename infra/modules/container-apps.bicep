@@ -73,7 +73,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: 0
+        // Keep one replica warm to avoid cold-start latency on long-running endpoints
+        // like /api/regenerate, which can otherwise hit the 240s ingress timeout (504).
+        minReplicas: 1
         maxReplicas: 5
         rules: [
           {

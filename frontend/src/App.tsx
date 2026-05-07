@@ -153,7 +153,27 @@ export default function App() {
         headers,
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const text = await res.text();
+          detail = text.slice(0, 500);
+        } catch {
+          // body may be unreadable on gateway timeouts
+        }
+        const err = new Error(`POST /api/regenerate failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+        log.error("Regenerate request failed", err, { status: res.status, detail });
+        if (res.status === 504 || res.status === 502 || res.status === 503) {
+          alert(
+            "The server took too long to respond (gateway timeout). " +
+            "This sometimes happens on a cold start or when image generation is slow. " +
+            "Please wait ~30 seconds and try again.",
+          );
+        } else {
+          alert(`Regeneration failed (HTTP ${res.status}). Please try again in a moment.`);
+        }
+        throw err;
+      }
       const body = (await res.json()) as {
         cardData: CardData;
         cardImage?: { url?: string; base64?: string } | null;
@@ -180,6 +200,10 @@ export default function App() {
       }
     } catch (err) {
       log.error("Regenerate failed", err);
+      // If we haven't already alerted (i.e. this was a non-HTTP error like network failure), notify the user.
+      if (err instanceof Error && !err.message.startsWith("POST /api/regenerate failed")) {
+        alert(`Could not regenerate: ${err.message}. Check your connection and try again.`);
+      }
     } finally {
       setRegenerating(false);
     }

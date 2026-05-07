@@ -9,7 +9,8 @@ import { MsalProvider, MsalAuthenticationTemplate } from "@azure/msal-react";
 import "./index.css";
 import App from "./App.tsx";
 import { MsalAuthBridge, NoAuthProvider } from "./auth/AuthContext.tsx";
-import { createLogger } from "./utils/logger";
+import { createLogger, setTelemetrySink } from "./utils/logger";
+import { initTelemetry, trackException, trackTrace } from "./utils/telemetry";
 
 const log = createLogger("bootstrap");
 
@@ -22,6 +23,9 @@ type AuthConfig = {
 
 async function bootstrap() {
   log.info(`skillcard frontend booting · build=${__GIT_TAG__ || "dev"} · sha=${__GIT_SHA__}`);
+  // Init App Insights early so subsequent boot events (auth fetch, etc.) are correlated.
+  setTelemetrySink({ trackTrace, trackException });
+  await initTelemetry(__GIT_SHA__, __GIT_TAG__);
   const root = createRoot(document.getElementById("root")!);
 
   let authConfig: AuthConfig = { authEnabled: false };

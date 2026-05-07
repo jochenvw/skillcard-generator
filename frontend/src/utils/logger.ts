@@ -17,6 +17,18 @@
 
 const IS_DEV = import.meta.env.DEV;
 
+// Lazy reference to telemetry helpers — avoids a hard import cycle (telemetry.ts imports logger).
+type TelemetrySink = {
+  trackTrace: (msg: string, props?: Record<string, unknown>) => void;
+  trackException: (err: unknown, props?: Record<string, unknown>) => void;
+};
+let sink: TelemetrySink | null = null;
+
+/** Wire the App Insights helpers into the logger. Called once from main.tsx after init. */
+export function setTelemetrySink(s: TelemetrySink): void {
+  sink = s;
+}
+
 // Color the module tag in the console for quick visual scanning.
 const STYLE_TAG = "color:#67e8f9;font-weight:600";
 const STYLE_LEVEL_INFO = "color:#a3e635";
@@ -46,9 +58,24 @@ export function createLogger(tag: string): Logger {
     },
     warn: (msg, ...args) => {
       console.warn(...format("WRN", STYLE_LEVEL_WARN, tag, msg), ...args);
+      sink?.trackTrace(`[${tag}] ${msg}`, { level: "warn", args: safeArgs(args) });
     },
     error: (msg, ...args) => {
       console.error(...format("ERR", STYLE_LEVEL_ERROR, tag, msg), ...args);
+      const err = args.find((a) => a instanceof Error);
+      if (err) {
+        sink?.trackException(err, { tag, message: msg, args: safeArgs(args) });
+      } else {
+        sink?.trackTrace(`[${tag}] ${msg}`, { level: "error", args: safeArgs(args) });
+      }
     },
   };
+}
+
+function safeArgs(args: unknown[]): unknown {
+  try {
+    return JSON.parse(JSON.stringify(args));
+  } catch {
+    return args.map((a) => (a instanceof Error ? { name: a.name, message: a.message } : String(a)));
+  }
 }

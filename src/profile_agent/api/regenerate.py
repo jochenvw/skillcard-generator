@@ -52,6 +52,7 @@ class RegenerateRequest(BaseModel):
 
 @router.post("/regenerate")
 async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_user)):
+    import time
     from profile_agent.services.stateless_interview_service import (
         CompletedStageSummary,
         _generate_card_image,
@@ -71,7 +72,8 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
     completed = [CompletedStageSummary(id=s.id, summary=s.summary) for s in body.completedStageSummaries]
     display_name = body.identity.name or user.get("name", "") or "Anonymous"
 
-    logger.info("POST /api/regenerate | name=%s stages=%d image=%s",
+    t0 = time.perf_counter()
+    logger.info("POST /api/regenerate START | name=%s stages=%d image=%s",
                 display_name, len(completed), body.includeImage)
 
     client = await _get_openai_client(settings)
@@ -82,10 +84,14 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
             import json as _json
             additional_context = f"Bulk-extracted profile data: {_json.dumps(body.bulk_extracted)}"
 
+        t_synth = time.perf_counter()
         synthesis_json = await _run_synthesis(
             client, settings, completed, [],
             additional_context=additional_context,
         )
+        logger.info("regenerate: synthesis done in %.2fs", time.perf_counter() - t_synth)
+
+        t_card = time.perf_counter()
         card_data = await _run_card_generation(
             client,
             settings,
@@ -98,8 +104,9 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
             completed_summaries=completed,
             role_text=body.identity.title or body.identity.role,
         )
+        logger.info("regenerate: card generation done in %.2fs", time.perf_counter() - t_card)
     except Exception as exc:
-        logger.exception("Regeneration failed")
+        logger.exception("Regeneration failed after %.2fs", time.perf_counter() - t0)
         raise HTTPException(status_code=500, detail=f"Regeneration failed: {exc}") from exc
 
     response: dict = {"cardData": card_data}
@@ -116,7 +123,9 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
                     persona_setting=body.style.personaSetting,
                     accent_color=body.style.accentColor,
                 )
+            t_img = time.perf_counter()
             img = await _generate_card_image(client, settings, card_data, photo_base64=body.photoBase64, style=style)
+            logger.info("regenerate: image generation done in %.2fs", time.perf_counter() - t_img)
             if img and "base64" in img:
                 response["cardImage"] = img
             elif img and img.get("error") == "rate_limited":
@@ -127,7 +136,8 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
             elif img and img.get("error"):
                 response["cardImageError"] = "failed"
         except Exception:
-            logger.exception("Image regeneration failed")
+            logger.exception("Image regeneration failed after %.2fs total", time.perf_counter() - t0)
             response["cardImageError"] = "image generation failed"
 
+    logger.info("POST /api/regenerate DONE in %.2fs", time.perf_counter() - t0)
     return response

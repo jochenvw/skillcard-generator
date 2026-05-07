@@ -8,7 +8,7 @@ from functools import lru_cache
 from urllib.parse import urlparse
 from typing import TYPE_CHECKING
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -58,7 +58,15 @@ class Settings(BaseSettings):
     azure_openai_api_version: str = "2025-04-01-preview"
 
     # Application Insights
-    appinsights_connection_string: str = ""
+    # Bicep injects APPLICATIONINSIGHTS_CONNECTION_STRING; legacy env var is APPINSIGHTS_CONNECTION_STRING.
+    appinsights_connection_string: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "APPLICATIONINSIGHTS_CONNECTION_STRING",
+            "APPINSIGHTS_CONNECTION_STRING",
+            "appinsights_connection_string",
+        ),
+    )
 
     # Microsoft Entra ID
     entra_client_id: str = ""

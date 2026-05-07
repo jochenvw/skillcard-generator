@@ -65,6 +65,17 @@ def create_fastapi_app() -> FastAPI:
     from profile_agent.api.auth import router as auth_router
     app.include_router(auth_router)
 
+    # Telemetry config endpoint (public — returns App Insights connection string for SPA)
+    from profile_agent.api.telemetry import router as telemetry_router
+    app.include_router(telemetry_router)
+
+    # OpenTelemetry auto-instrumentation (FastAPI + httpx)
+    try:
+        from profile_agent.config.telemetry import instrument_app
+        instrument_app(app)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Telemetry instrumentation skipped: %s", e)
+
     # Serve React frontend (built static files)
     import os
     from pathlib import Path

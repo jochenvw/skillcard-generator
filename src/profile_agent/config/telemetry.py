@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 
 from opentelemetry import metrics, trace
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -14,6 +17,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 logger = logging.getLogger(__name__)
 
 _configured = False
+_app_instrumented = False
 
 
 def configure_telemetry(
@@ -54,7 +58,15 @@ def configure_telemetry(
             meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
             metrics.set_meter_provider(meter_provider)
 
-            logger.info("Telemetry configured with Azure Monitor")
+            # Logs — bridge stdlib logging to Azure Monitor
+            log_exporter = AzureMonitorLogExporter(connection_string=connection_string)
+            logger_provider = LoggerProvider(resource=resource)
+            logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+            set_logger_provider(logger_provider)
+            otel_handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
+            logging.getLogger().addHandler(otel_handler)
+
+            logger.info("Telemetry configured with Azure Monitor (traces, metrics, logs)")
         except ImportError:
             logger.warning("azure-monitor-opentelemetry-exporter not installed — telemetry disabled")
             _setup_noop_providers(resource)
@@ -63,6 +75,23 @@ def configure_telemetry(
         _setup_noop_providers(resource)
 
     _configured = True
+
+
+def instrument_app(app) -> None:  # noqa: ANN001 — FastAPI app type avoided to keep import light
+    """Enable FastAPI + httpx auto-instrumentation. Idempotent."""
+    global _app_instrumented
+    if _app_instrumented:
+        return
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+        FastAPIInstrumentor.instrument_app(app)
+        HTTPXClientInstrumentor().instrument()
+        _app_instrumented = True
+        logger.info("FastAPI + httpx auto-instrumentation enabled")
+    except Exception as e:  # noqa: BLE001 — instrumentation must never break the app
+        logger.warning("Auto-instrumentation skipped: %s", e)
 
 
 def _setup_noop_providers(resource: Resource) -> None:
