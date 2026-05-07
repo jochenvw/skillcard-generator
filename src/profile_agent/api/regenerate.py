@@ -7,11 +7,8 @@ the client from its persisted localStorage session.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
-import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,27 +18,16 @@ from profile_agent.api.auth import get_current_user
 from profile_agent.config.context import hash_user_id, user_id_var
 from profile_agent.config.events import wide_event
 from profile_agent.config.settings import get_settings
+from profile_agent.services import image_cache
+from profile_agent.services.image_queue import (
+    QueueFullError,
+    STATE_DONE,
+    get_queue,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["regenerate"])
-
-# In-memory job store for image-generation polling. The Container Apps ingress
-# request timeout is hard-capped at 240s on the Consumption plan, but image
-# generation can take 200-320s — so we run it in the background and let the
-# client poll. Single-replica deployment means we don't need a shared store.
-_IMAGE_JOBS: dict[str, dict[str, Any]] = {}
-_JOB_TTL = timedelta(minutes=30)
-_JOB_HARD_TIMEOUT_S = 600  # 10 minutes — give up on the image even if the model is still working
-
-
-def _cleanup_expired_jobs() -> None:
-    now = datetime.now(UTC)
-    expired = [jid for jid, job in _IMAGE_JOBS.items() if now - job["created_at"] > _JOB_TTL]
-    for jid in expired:
-        _IMAGE_JOBS.pop(jid, None)
-    if expired:
-        wide_event("regenerate.image.jobs.evicted", outcome="ok", count=len(expired))
 
 
 class _Identity(BaseModel):
@@ -282,8 +268,8 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Background image regeneration (job + poll API) — works around the 240s
-# Container Apps ingress timeout.
+# Background image regeneration (queued + polled). Throttled by the singleton
+# image queue so we don't hammer the upstream rate limit.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -293,163 +279,134 @@ class ImageJobRequest(BaseModel):
     style: _CardStyleBody | None = None
 
 
+async def image_worker(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Worker invoked by the queue. Performs the actual upstream image call.
+
+    Payload shape (set by ``start_image_job``):
+        {"card_data": dict, "photo_base64": str|None, "style": dict|None}
+
+    Returns the raw image_service result dict so the queue can interpret
+    success / rate_limit / generic failure uniformly.
+    """
+    from profile_agent.models.llm_contracts import CardStyle
+    from profile_agent.services.stateless_interview_service import _generate_card_image, _get_openai_client
+
+    settings = get_settings()
+    client = await _get_openai_client(settings)
+    style_dict = payload.get("style")
+    style: CardStyle | None = None
+    if style_dict and any(style_dict.get(k) for k in ("stylePreset", "personaSetting", "accentColor")):
+        style = CardStyle(
+            style_preset=style_dict.get("stylePreset"),
+            persona_setting=style_dict.get("personaSetting"),
+            accent_color=style_dict.get("accentColor"),
+        )
+    return await _generate_card_image(
+        client,
+        settings,
+        payload["card_data"],
+        photo_base64=payload.get("photo_base64"),
+        style=style,
+    )
+
+
 @router.post("/regenerate/image")
 async def start_image_job(body: ImageJobRequest, user: dict = Depends(get_current_user)):
-    """Kick off image generation in a background task; return a job_id to poll."""
-    _cleanup_expired_jobs()
+    """Submit an image-generation job to the queue.
+
+    Behavior:
+    - Cache hit → returns ``state="done"`` inline with the cached image, skipping the queue.
+    - Queue full → 429 with ``retry_after_s``.
+    - Otherwise → ``state="queued"`` with ``queue_position`` and ``estimated_wait_s``.
+    """
+    from profile_agent.services.stateless_interview_service import _build_card_image_prompt
     user_hash = hash_user_id(user.get("user_id") or user.get("email", ""))
     user_id_var.set(user_hash)
-    job_id = uuid.uuid4().hex
-    _IMAGE_JOBS[job_id] = {
-        "status": "pending",
-        "created_at": datetime.now(UTC),
-        "user_id_hash": user_hash,
+
+    # ── Image cache short-circuit (skips the queue entirely) ─────────────────
+    settings = get_settings()
+    photo_bytes = None
+    if body.photoBase64:
+        try:
+            import base64 as _b64
+            photo_bytes = _b64.b64decode(body.photoBase64)
+        except Exception:  # noqa: BLE001
+            photo_bytes = None
+    try:
+        prompt = _build_card_image_prompt(body.cardData)
+        deployment = settings.foundry_image_deployment_name
+        cache_key = image_cache.compute_key(
+            deployment=deployment,
+            size="1024x1536",
+            prompt=prompt,
+            photo_bytes=photo_bytes,
+        )
+        cached = image_cache.get(cache_key)
+    except Exception:  # noqa: BLE001
+        cache_key = ""
+        cached = None
+    if cached is not None:
+        wide_event(
+            "image_job.cache_hit",
+            outcome="ok",
+            cache_key=cache_key[:12],
+        )
+        return {
+            "state": STATE_DONE,
+            "result": {"base64": cached["base64"]},
+            "cache_hit": True,
+        }
+
+    # ── Enqueue ──────────────────────────────────────────────────────────────
+    queue = get_queue()
+    try:
+        job = queue.enqueue(
+            user_hash=user_hash,
+            payload={
+                "card_data": body.cardData,
+                "photo_base64": body.photoBase64,
+                "style": body.style.model_dump() if body.style else None,
+            },
+            has_photo=bool(body.photoBase64),
+            cache_key_prefix=cache_key,
+        )
+    except QueueFullError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "queue_full",
+                "queue_depth": exc.depth,
+                "retry_after_s": exc.retry_after_s,
+                "message": (
+                    "We're generating a lot of cards right now. "
+                    "Please try again in a few minutes."
+                ),
+            },
+            headers={"Retry-After": str(exc.retry_after_s)},
+        ) from exc
+
+    return {
+        "job_id": job.job_id,
+        "state": job.state,
+        "queue_position": job.queue_position,
+        "queue_depth": queue.stats()["queue_depth"],
+        "estimated_wait_s": queue.estimate_wait_s(job.queue_position),
     }
-    asyncio.create_task(_run_image_job(job_id, body, user_hash))
-    wide_event(
-        "regenerate.image.job.created",
-        outcome="ok",
-        job_id=job_id,
-        has_photo=bool(body.photoBase64),
-    )
-    return {"job_id": job_id, "status": "pending"}
 
 
 @router.get("/regenerate/image/{job_id}")
 async def poll_image_job(job_id: str, user: dict = Depends(get_current_user)):
-    """Poll an image-generation job. Returns status + image (when ready) or error."""
-    job = _IMAGE_JOBS.get(job_id)
-    if job is None:
-        wide_event("regenerate.image.job.not_found", outcome="error", job_id=job_id, level=logging.WARNING)
-        raise HTTPException(status_code=404, detail="Job not found or expired")
-    expected_hash = hash_user_id(user.get("user_id") or user.get("email", ""))
-    if job["user_id_hash"] != expected_hash:
-        wide_event("regenerate.image.job.forbidden", outcome="error", job_id=job_id, level=logging.WARNING)
-        raise HTTPException(status_code=403, detail="Not your job")
-
-    resp: dict[str, Any] = {"status": job["status"]}
-    if job["status"] == "ready":
-        resp["image"] = job["image"]
-        resp["duration_ms"] = job.get("duration_ms")
-    elif job["status"] == "failed":
-        resp["error"] = job.get("error", "unknown")
-        resp["error_type"] = job.get("error_type")
-        if job.get("retry_after"):
-            resp["retry_after"] = job["retry_after"]
-    return resp
+    """Poll an image-generation job."""
+    user_hash = hash_user_id(user.get("user_id") or user.get("email", ""))
+    queue = get_queue()
+    status = queue.status(job_id, user_hash)
+    if status is None:
+        wide_event("image_job.not_found", outcome="error", job_id=job_id, level=logging.WARNING)
+        raise HTTPException(status_code=404, detail="Job not found, expired, or not yours")
+    return {"job_id": job_id, **status}
 
 
-async def _run_image_job(job_id: str, body: ImageJobRequest, user_hash: str) -> None:
-    """Background task that generates the image and stashes the result on the job."""
-    from profile_agent.models.llm_contracts import CardStyle
-    from profile_agent.services.stateless_interview_service import _generate_card_image, _get_openai_client
-
-    # Restore request context vars in this background task so wide_events stay correlated
-    user_id_var.set(user_hash)
-    settings = get_settings()
-    t0 = time.perf_counter()
-    wide_event(
-        "regenerate.image.job.started",
-        outcome="ok",
-        job_id=job_id,
-        has_photo=bool(body.photoBase64),
-    )
-    try:
-        client = await _get_openai_client(settings)
-        style: CardStyle | None = None
-        if body.style is not None and any(
-            v for v in (body.style.stylePreset, body.style.personaSetting, body.style.accentColor)
-        ):
-            style = CardStyle(
-                style_preset=body.style.stylePreset,
-                persona_setting=body.style.personaSetting,
-                accent_color=body.style.accentColor,
-            )
-        img = await asyncio.wait_for(
-            _generate_card_image(client, settings, body.cardData, photo_base64=body.photoBase64, style=style),
-            timeout=_JOB_HARD_TIMEOUT_S,
-        )
-        duration_ms = int((time.perf_counter() - t0) * 1000)
-        if img and "base64" in img:
-            _IMAGE_JOBS[job_id].update({"status": "ready", "image": img, "duration_ms": duration_ms})
-            wide_event(
-                "regenerate.image.job.completed",
-                outcome="ok",
-                job_id=job_id,
-                duration_ms=duration_ms,
-            )
-        elif img and img.get("error") == "rate_limited":
-            _IMAGE_JOBS[job_id].update(
-                {
-                    "status": "failed",
-                    "error": "rate_limited",
-                    "error_type": "rate_limited",
-                    "retry_after": img.get("retry_after"),
-                    "duration_ms": duration_ms,
-                }
-            )
-            wide_event(
-                "regenerate.image.job.completed",
-                outcome="error",
-                error_type="rate_limited",
-                job_id=job_id,
-                duration_ms=duration_ms,
-                level=logging.WARNING,
-            )
-        else:
-            err_kind = (img or {}).get("error", "generation_failed") if img else "no_image"
-            _IMAGE_JOBS[job_id].update(
-                {
-                    "status": "failed",
-                    "error": str(err_kind),
-                    "error_type": "generation_failed",
-                    "duration_ms": duration_ms,
-                }
-            )
-            wide_event(
-                "regenerate.image.job.completed",
-                outcome="error",
-                error_type=str(err_kind),
-                job_id=job_id,
-                duration_ms=duration_ms,
-                level=logging.ERROR,
-            )
-    except TimeoutError:
-        duration_ms = int((time.perf_counter() - t0) * 1000)
-        _IMAGE_JOBS[job_id].update(
-            {
-                "status": "failed",
-                "error": f"image generation exceeded {_JOB_HARD_TIMEOUT_S}s timeout",
-                "error_type": "TimeoutError",
-                "duration_ms": duration_ms,
-            }
-        )
-        wide_event(
-            "regenerate.image.job.completed",
-            outcome="error",
-            error_type="TimeoutError",
-            job_id=job_id,
-            duration_ms=duration_ms,
-            level=logging.ERROR,
-        )
-        logger.error("Image job %s timed out after %ds", job_id, _JOB_HARD_TIMEOUT_S)
-    except Exception as exc:
-        duration_ms = int((time.perf_counter() - t0) * 1000)
-        _IMAGE_JOBS[job_id].update(
-            {
-                "status": "failed",
-                "error": str(exc)[:500],
-                "error_type": type(exc).__name__,
-                "duration_ms": duration_ms,
-            }
-        )
-        wide_event(
-            "regenerate.image.job.completed",
-            outcome="error",
-            error_type=type(exc).__name__,
-            error_message=str(exc)[:500],
-            job_id=job_id,
-            duration_ms=duration_ms,
-            level=logging.ERROR,
-        )
-        logger.exception("Image job %s failed", job_id)
+@router.get("/regenerate/queue/stats")
+async def queue_stats():
+    """Operator endpoint — no auth required, no PII. Useful for dashboards."""
+    return get_queue().stats()

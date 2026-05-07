@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 import mimetypes
 
@@ -18,6 +19,21 @@ mimetypes.add_type("text/javascript", ".mjs")
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Start the in-process image throttle/queue. Must run as a singleton:
+    # maxReplicas=1 + single uvicorn worker enforced in infra.
+    from profile_agent.api.regenerate import image_worker
+    from profile_agent.services.image_queue import get_queue
+
+    queue = get_queue()
+    await queue.start(image_worker)
+    try:
+        yield
+    finally:
+        await queue.stop()
+
+
 def create_fastapi_app() -> FastAPI:
     """Build and configure the FastAPI app."""
     settings = get_settings()
@@ -26,6 +42,7 @@ def create_fastapi_app() -> FastAPI:
         title="Profile Agent",
         version="0.1.0",
         docs_url="/api/docs" if settings.run_mode == "web" else None,
+        lifespan=_lifespan,
     )
 
     # CORS — restrict in production

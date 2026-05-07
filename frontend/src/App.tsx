@@ -84,6 +84,9 @@ export default function App() {
     typeof window !== "undefined" && localStorage.getItem("skillcard-image") ? "ready" : "idle",
   );
   const [imageError, setImageError] = useState<string | null>(null);
+  // Server-side throttle queue position for the in-flight image job.
+  // When non-null and imageStatus==="loading", the indicator renders queued state.
+  const [imageQueueInfo, setImageQueueInfo] = useState<{ position: number; etaSec: number } | null>(null);
   // Safety-net: if a generation gets stuck (network drop, server crash with no
   // response), force back to 'error' after this many ms so the UI never spins
   // forever. Cleared on success, error, or new generation.
@@ -97,16 +100,21 @@ export default function App() {
   const startImageGeneration = useCallback(() => {
     clearImageTimeout();
     setImageError(null);
+    setImageQueueInfo(null);
     setImageStatus("loading");
+    // 16min covers worst-case queue depth (12) + p50 runtime (5min). Aligned
+    // with the backend's queue capacity calculation.
     imageTimeoutRef.current = setTimeout(() => {
-      log.warn("Image generation timed out client-side after 5min");
+      log.warn("Image generation timed out client-side after 16min");
       setImageStatus("error");
       setImageError("Timed out waiting for the portrait. Try regenerating.");
-    }, 5 * 60 * 1000);
+      setImageQueueInfo(null);
+    }, 16 * 60 * 1000);
   }, [clearImageTimeout]);
   const finishImageGeneration = useCallback(
     (outcome: "ready" | "error", message?: string) => {
       clearImageTimeout();
+      setImageQueueInfo(null);
       setImageStatus(outcome);
       setImageError(outcome === "error" ? (message ?? "Portrait generation failed.") : null);
     },
@@ -266,8 +274,8 @@ export default function App() {
         duration_ms: String(textDurationMs),
       });
 
-      // ── Kick off image generation as a background job and poll ────────────
-      let imageOutcome: "ready" | "failed" | "rate_limited" | "timeout" | "skipped" = "skipped";
+      // ── Kick off image generation as a queued background job and poll ─────
+      let imageOutcome: "ready" | "failed" | "rate_limited" | "timeout" | "queue_full" | "cancelled" | "skipped" = "skipped";
       let imageRetryAfter: number | undefined;
       try {
         const startRes = await apiFetch(
@@ -283,114 +291,165 @@ export default function App() {
           },
           { sessionId: session.sessionId, authToken },
         );
+
+        // Backend returns 429 when the queue is full. Surface that distinctly.
+        if (startRes.status === 429) {
+          let detail: { retry_after_s?: number; message?: string } = {};
+          try {
+            const body429 = await startRes.json();
+            detail = body429?.detail ?? body429 ?? {};
+          } catch { /* ignore */ }
+          const retryAfter = detail.retry_after_s ?? 90;
+          imageOutcome = "queue_full";
+          imageRetryAfter = retryAfter;
+          throw new Error(detail.message || `Image queue is full. Try again in ~${retryAfter}s.`);
+        }
         if (!startRes.ok) {
           throw new Error(`POST /api/regenerate/image failed: HTTP ${startRes.status}`);
         }
-        const { job_id: jobId } = (await startRes.json()) as { job_id: string };
-        log.info("regenerate.image job started", { jobId });
 
-        const POLL_INTERVAL_MS = 3000;
-        const POLL_MAX_MS = 8 * 60 * 1000; // 8 minutes
-        const pollStart = performance.now();
-        let pollCount = 0;
+        const startBody = (await startRes.json()) as {
+          job_id?: string;
+          state: "queued" | "running" | "done" | "failed" | "cancelled";
+          queue_position?: number;
+          estimated_wait_s?: number;
+          result?: { base64?: string; url?: string };
+          cache_hit?: boolean;
+        };
 
-        while (true) {
-          if (performance.now() - pollStart > POLL_MAX_MS) {
-            imageOutcome = "timeout";
-            break;
+        // ── Cache hit short-circuit (server returned the image inline) ────
+        if (startBody.state === "done" && startBody.result) {
+          const totalImageMs = Math.round(performance.now() - t0);
+          log.info("regenerate ✓ image (cache)", { totalMs: totalImageMs });
+          if (startBody.result.base64) {
+            setCardImageSrc(`data:image/png;base64,${startBody.result.base64}`);
+          } else if (startBody.result.url) {
+            setCardImageSrc(startBody.result.url);
           }
-          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-          pollCount++;
-          const pollRes = await apiFetch(
-            `/api/regenerate/image/${jobId}`,
-            { method: "GET" },
-            { sessionId: session.sessionId, authToken },
-          );
-          if (!pollRes.ok) {
-            // 404 (expired/lost on replica restart) or 5xx — treat as transient/failure
-            if (pollRes.status === 404) {
-              throw new Error("Image job lost (server may have restarted). Please retry.");
-            }
-            // transient — keep polling unless we've been doing it for a while
-            if (performance.now() - pollStart > 30000) {
-              throw new Error(`Image polling failed: HTTP ${pollRes.status}`);
-            }
-            continue;
+          finishImageGeneration("ready");
+          imageOutcome = "ready";
+        } else if (startBody.job_id) {
+          const jobId = startBody.job_id;
+          if (startBody.state === "queued" && startBody.queue_position && startBody.estimated_wait_s) {
+            setImageQueueInfo({ position: startBody.queue_position, etaSec: startBody.estimated_wait_s });
           }
-          const pollBody = (await pollRes.json()) as {
-            status: "pending" | "ready" | "failed";
-            image?: { url?: string; base64?: string };
-            error?: string;
-            error_type?: string;
-            retry_after?: number;
-            duration_ms?: number;
-          };
-          if (pollBody.status === "ready" && pollBody.image) {
-            const totalImageMs = Math.round(performance.now() - pollStart);
-            log.info("regenerate ✓ image (job)", {
-              jobId,
-              polls: pollCount,
-              totalMs: totalImageMs,
-              serverMs: pollBody.duration_ms,
+          log.info("regenerate.image job queued", {
+            jobId,
+            state: startBody.state,
+            queuePosition: startBody.queue_position,
+            etaSec: startBody.estimated_wait_s,
+          });
+
+          const POLL_INTERVAL_MS = 3000;
+          const POLL_MAX_MS = 15 * 60 * 1000; // 15 minutes — covers worst-case queue depth + runtime.
+          const pollStart = performance.now();
+          let pollCount = 0;
+
+          while (true) {
+            if (performance.now() - pollStart > POLL_MAX_MS) {
+              imageOutcome = "timeout";
+              break;
+            }
+            await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+            pollCount++;
+            const pollRes = await apiFetch(
+              `/api/regenerate/image/${jobId}`,
+              { method: "GET" },
+              { sessionId: session.sessionId, authToken },
+            );
+            if (!pollRes.ok) {
+              if (pollRes.status === 404) {
+                throw new Error("Image job lost (server may have restarted). Please retry.");
+              }
+              if (performance.now() - pollStart > 30000) {
+                throw new Error(`Image polling failed: HTTP ${pollRes.status}`);
+              }
+              continue;
+            }
+            const pollBody = (await pollRes.json()) as {
+              state: "queued" | "running" | "done" | "failed" | "cancelled";
+              queue_position?: number;
+              estimated_wait_s?: number;
+              result?: { url?: string; base64?: string };
+              error?: string;
+              error_type?: string;
+              retry_after?: number;
+            };
+            if (pollBody.state === "queued" && pollBody.queue_position && pollBody.estimated_wait_s) {
+              setImageQueueInfo({ position: pollBody.queue_position, etaSec: pollBody.estimated_wait_s });
+            } else if (pollBody.state === "running") {
+              setImageQueueInfo(null); // running indicator takes over
+            }
+            if (pollBody.state === "done" && pollBody.result) {
+              const totalImageMs = Math.round(performance.now() - pollStart);
+              log.info("regenerate ✓ image (job)", { jobId, polls: pollCount, totalMs: totalImageMs });
+              if (pollBody.result.url) {
+                setCardImageSrc(pollBody.result.url);
+              } else if (pollBody.result.base64) {
+                setCardImageSrc(`data:image/png;base64,${pollBody.result.base64}`);
+              }
+              finishImageGeneration("ready");
+              imageOutcome = "ready";
+              break;
+            }
+            if (pollBody.state === "failed" || pollBody.state === "cancelled") {
+              log.warn("regenerate.image job ended", {
+                jobId,
+                state: pollBody.state,
+                error: pollBody.error,
+                errorType: pollBody.error_type,
+              });
+              if (pollBody.error_type === "rate_limited" || pollBody.error === "rate_limited") {
+                imageOutcome = "rate_limited";
+                imageRetryAfter = pollBody.retry_after;
+              } else if (pollBody.state === "cancelled") {
+                imageOutcome = "cancelled";
+              } else {
+                imageOutcome = "failed";
+              }
+              break;
+            }
+            // queued or running → keep polling
+          }
+
+          if (imageOutcome === "rate_limited") {
+            const wait = imageRetryAfter
+              ? `Please wait ~${imageRetryAfter}s and try again.`
+              : "Please wait a minute and try again.";
+            finishImageGeneration("error", `Image service is rate-limited. ${wait}`);
+            toast.warning(`Card text was regenerated, but the portrait service is rate-limited. ${wait}`, {
+              title: "Image service rate-limited",
             });
-            if (pollBody.image.url) {
-              setCardImageSrc(pollBody.image.url);
-            } else if (pollBody.image.base64) {
-              setCardImageSrc(`data:image/png;base64,${pollBody.image.base64}`);
-            }
-            finishImageGeneration("ready");
-            imageOutcome = "ready";
-            break;
-          }
-          if (pollBody.status === "failed") {
-            log.warn("regenerate.image job failed", {
-              jobId,
-              error: pollBody.error,
-              errorType: pollBody.error_type,
+          } else if (imageOutcome === "cancelled") {
+            finishImageGeneration("error", "Server restarted while your portrait was being made. Please try again.");
+            toast.warning("The portrait was cancelled — server restarted. Click try again.", {
+              title: "Portrait cancelled",
+              action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
             });
-            if (pollBody.error === "rate_limited") {
-              imageOutcome = "rate_limited";
-              imageRetryAfter = pollBody.retry_after;
-            } else {
-              imageOutcome = "failed";
-            }
-            break;
+          } else if (imageOutcome === "failed") {
+            finishImageGeneration("error", "Image generation failed. Try regenerating again.");
+            toast.warning("Card text was regenerated, but the portrait could not be created.", {
+              title: "Portrait generation failed",
+              action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+            });
+          } else if (imageOutcome === "timeout") {
+            finishImageGeneration("error", "Image generation timed out. Try regenerating again.");
+            toast.warning("Portrait generation took too long. Card text is ready — try regenerating the image.", {
+              title: "Portrait timed out",
+              action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+            });
           }
-          // status === "pending" → keep polling
-        }
-
-        if (imageOutcome === "rate_limited") {
-          const wait = imageRetryAfter
-            ? `Please wait ~${imageRetryAfter}s and try again.`
-            : "Please wait a minute and try again.";
-          finishImageGeneration("error", `Image service is rate-limited. ${wait}`);
-          toast.warning(`Card text was regenerated, but the portrait service is rate-limited. ${wait}`, {
-            title: "Image service rate-limited",
-          });
-        } else if (imageOutcome === "failed") {
-          finishImageGeneration("error", "Image generation failed. Try regenerating again.");
-          toast.warning("Card text was regenerated, but the portrait could not be created.", {
-            title: "Portrait generation failed",
-            action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
-          });
-        } else if (imageOutcome === "timeout") {
-          finishImageGeneration("error", "Image generation timed out. Try regenerating again.");
-          toast.warning("Portrait generation took too long. Card text is ready — try regenerating the image.", {
-            title: "Portrait timed out",
-            action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
-          });
         }
       } catch (imgErr) {
         log.error("Image polling failed", imgErr);
-        imageOutcome = "failed";
-        finishImageGeneration("error", imgErr instanceof Error ? imgErr.message : "Image generation failed");
-        toast.warning(
-          imgErr instanceof Error ? imgErr.message : "Card text was regenerated, but the portrait could not be created.",
-          {
-            title: "Portrait generation failed",
-            action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
-          },
-        );
+        const failureKind = imageOutcome === "queue_full" ? "queue_full" : "failed";
+        if (failureKind !== "queue_full") imageOutcome = "failed";
+        const errMsg = imgErr instanceof Error ? imgErr.message : "Image generation failed";
+        finishImageGeneration("error", errMsg);
+        toast.warning(errMsg, {
+          title: imageOutcome === "queue_full" ? "Queue full" : "Portrait generation failed",
+          action: { label: "Try again", onClick: () => regenerateCardRef.current?.() },
+        });
       }
 
       trackEvent("regenerate.completed", {
@@ -878,6 +937,7 @@ export default function App() {
           cardData={cardData}
           imageStatus={imageStatus}
           imageError={imageError}
+          imageQueueInfo={imageQueueInfo}
           onDismissImageError={() => {
             setImageStatus("idle");
             setImageError(null);

@@ -44,6 +44,7 @@ interface ChatPanelProps {
   cardData?: CardData | null;
   imageStatus?: "idle" | "loading" | "ready" | "error";
   imageError?: string | null;
+  imageQueueInfo?: { position: number; etaSec: number } | null;
   onDismissImageError?: () => void;
   photoBase64?: string | null;
   getAuthHeaders?: () => Promise<HeadersInit>;
@@ -74,6 +75,7 @@ export function ChatPanel({
   cardData,
   imageStatus = "idle",
   imageError,
+  imageQueueInfo = null,
   onDismissImageError,
   photoBase64,
   getAuthHeaders,
@@ -372,7 +374,7 @@ export function ChatPanel({
                   <div className="w-[420px] aspect-[2/3] rounded-2xl border-2 border-violet-500/30 shadow-lg shadow-violet-500/10 skillcard-frame rarity-epic bg-gradient-to-br from-slate-900 via-violet-950/40 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
                     <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_50%_50%,rgba(139,92,246,0.25),transparent_60%)] animate-pulse" />
                     <div className="relative z-10 w-full">
-                      <CardGeneratingIndicator active variant="image" />
+                      <CardGeneratingIndicator active variant="image" queueInfo={imageQueueInfo} />
                     </div>
                   </div>
                   <span className="text-[10px] text-violet-400/70 font-mono uppercase tracking-wider">

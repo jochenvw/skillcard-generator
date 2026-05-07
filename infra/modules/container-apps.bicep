@@ -73,10 +73,23 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        // Keep one replica warm to avoid cold-start latency on long-running endpoints
-        // like /api/regenerate, which can otherwise hit the 240s ingress timeout (504).
+        // SINGLETON QUEUE INVARIANT — DO NOT CHANGE WITHOUT REVIEW.
+        //
+        // The image-generation throttle/queue (services/image_queue.py) is an
+        // in-process asyncio.Queue. It assumes exactly ONE replica + ONE worker
+        // process per cluster. Multiple replicas would each run their own queue
+        // and admitter loop, defeating the upstream rate-limit protection.
+        //
+        // Required:
+        //   minReplicas: 1   — admitter task must always be running (no scale-to-zero).
+        //   maxReplicas: 1   — only one in-process queue allowed.
+        //   uvicorn --workers 1 (verified in Dockerfile / start command).
+        //
+        // To horizontally scale, the queue would have to move to a shared backend
+        // (Azure Service Bus / Redis), or image generation would need to be split
+        // into a dedicated single-replica worker container.
         minReplicas: 1
-        maxReplicas: 5
+        maxReplicas: 1
         rules: [
           {
             name: 'http-scale'

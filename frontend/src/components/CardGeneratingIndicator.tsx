@@ -3,6 +3,9 @@ import { useState, useEffect, useRef } from "react";
 interface CardGeneratingIndicatorProps {
   active: boolean;
   variant?: "card" | "image";
+  /** When the image job is sitting in the server-side throttle queue.
+   *  When set, overrides the running indicator with a queued-state UI. */
+  queueInfo?: { position: number; etaSec: number } | null;
 }
 
 const VARIANTS = {
@@ -46,7 +49,7 @@ const VARIANTS = {
 
 const FADE_OUT_DELAY_MS = 600;
 
-export function CardGeneratingIndicator({ active, variant = "card" }: CardGeneratingIndicatorProps) {
+export function CardGeneratingIndicator({ active, variant = "card", queueInfo = null }: CardGeneratingIndicatorProps) {
   const cfg = VARIANTS[variant];
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState<string>(cfg.messages[0]);
@@ -107,6 +110,42 @@ export function CardGeneratingIndicator({ active, variant = "card" }: CardGenera
   }, [finishing]);
 
   if (!visible) return null;
+
+  // Queued state — overrides the regular running UI. The throttle queue is a
+  // server-side construct; show position + ETA so the user knows we haven't
+  // forgotten about them.
+  if (active && queueInfo) {
+    const etaMin = Math.floor(queueInfo.etaSec / 60);
+    const etaSec = queueInfo.etaSec % 60;
+    return (
+      <div className="mx-auto w-full max-w-sm transition-all duration-500 my-3 opacity-100">
+        <div className="compaction-terminal relative overflow-hidden rounded-lg border font-mono text-xs">
+          <div className="compaction-scanlines pointer-events-none absolute inset-0 z-10" />
+          <div className="flex items-center gap-2 border-b border-amber-900/50 bg-black/60 px-3 py-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-400 compaction-pulse" />
+            <span className="text-amber-300 tracking-wider text-[10px] uppercase font-bold">Queued</span>
+            <span className="ml-auto text-amber-800 text-[10px]">img.queue</span>
+          </div>
+          <div className="px-3 py-2.5 space-y-2 text-amber-200/90">
+            <div className="flex items-center gap-1.5">
+              <span className="text-amber-400 text-sm">{"\u23F3"}</span>
+              <span>
+                Position <span className="font-bold text-amber-100">{queueInfo.position}</span> in queue
+              </span>
+            </div>
+            <div className="text-[11px] text-amber-300/70">
+              We pace requests so the AI service doesn&apos;t get overwhelmed.
+              <br />
+              Starting in ~{etaMin > 0 ? `${etaMin}m ${etaSec.toString().padStart(2, "0")}s` : `${etaSec}s`}
+            </div>
+            <div className="text-[10px] text-amber-500/60 pt-0.5 border-t border-amber-900/30 mt-1">
+              Each card takes ~5 minutes once it starts.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const totalBlocks = 20;
   const filledBlocks = Math.round((progress / 100) * totalBlocks);
