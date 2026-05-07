@@ -117,6 +117,40 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
     image_error_type: str | None = None
     image_error_message: str | None = None
     current_step = "init"
+
+    # ── Cache lookup (text-only) ──────────────────────────────────────────────
+    # Identical inputs → identical card text. Survives only while this replica
+    # lives (filesystem-only). Image is always generated separately downstream.
+    from profile_agent.services import card_text_cache
+    cache_key = card_text_cache.compute_key(
+        deployment=settings.effective_azure_openai_deployment,
+        identity=body.identity.model_dump(),
+        completed_stages=[{"id": s.id, "summary": s.summary} for s in body.completedStageSummaries],
+        clifton_strengths=body.cliftonStrengths,
+        linkedin_skills=body.linkedin_skills,
+        github_skills=body.github_skills,
+        bulk_extracted=body.bulk_extracted,
+        style=body.style.model_dump() if body.style else None,
+    )
+    cached_card = card_text_cache.get(cache_key)
+    if cached_card is not None:
+        wide_event(
+            "regenerate.completed",
+            outcome="ok",
+            cache_hit=True,
+            cache_key=cache_key[:12],
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+            synthesis_ms=0,
+            card_ms=0,
+            image_ms=0,
+            image_outcome="skipped",
+            image_error_type=None,
+            image_error_message=None,
+            **base_attrs,
+        )
+        # Cache returns text only; client kicks off image gen via /api/regenerate/image.
+        return {"cardData": cached_card, "cacheHit": True}
+
     client = await _get_openai_client(settings)
 
     try:
@@ -149,6 +183,8 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
             role_text=body.identity.title or body.identity.role,
         )
         card_ms = int((time.perf_counter() - t) * 1000)
+        # Persist to text cache so identical re-clicks short-circuit.
+        card_text_cache.put(cache_key, card_data)
     except Exception as exc:
         wide_event(
             "regenerate.failed",
