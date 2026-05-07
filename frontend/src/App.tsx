@@ -71,6 +71,46 @@ export default function App() {
       return null;
     }
   });
+  // Explicit lifecycle for the portrait so the spinner only ever shows while we
+  // are *actually* generating, and clears on success or failure.
+  // 'idle'    — no generation in flight; show whatever cardImageSrc holds (incl. null)
+  // 'loading' — request in flight; show the forging spinner
+  // 'ready'   — image arrived; show it
+  // 'error'   — generation failed/timed out; show retry tile
+  type ImageStatus = "idle" | "loading" | "ready" | "error";
+  const [imageStatus, setImageStatus] = useState<ImageStatus>(() =>
+    typeof window !== "undefined" && localStorage.getItem("skillcard-image") ? "ready" : "idle",
+  );
+  const [imageError, setImageError] = useState<string | null>(null);
+  // Safety-net: if a generation gets stuck (network drop, server crash with no
+  // response), force back to 'error' after this many ms so the UI never spins
+  // forever. Cleared on success, error, or new generation.
+  const imageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearImageTimeout = useCallback(() => {
+    if (imageTimeoutRef.current) {
+      clearTimeout(imageTimeoutRef.current);
+      imageTimeoutRef.current = null;
+    }
+  }, []);
+  const startImageGeneration = useCallback(() => {
+    clearImageTimeout();
+    setImageError(null);
+    setImageStatus("loading");
+    imageTimeoutRef.current = setTimeout(() => {
+      log.warn("Image generation timed out client-side after 5min");
+      setImageStatus("error");
+      setImageError("Timed out waiting for the portrait. Try regenerating.");
+    }, 5 * 60 * 1000);
+  }, [clearImageTimeout]);
+  const finishImageGeneration = useCallback(
+    (outcome: "ready" | "error", message?: string) => {
+      clearImageTimeout();
+      setImageStatus(outcome);
+      setImageError(outcome === "error" ? (message ?? "Portrait generation failed.") : null);
+    },
+    [clearImageTimeout],
+  );
+  useEffect(() => () => clearImageTimeout(), [clearImageTimeout]);
   const setCardImageSrc = useCallback((src: string | null) => {
     setCardImageSrcState(src);
     try {
@@ -107,6 +147,7 @@ export default function App() {
 
         // 2) Kick off the slow image generation. The image-loader in
         // ChatPanel becomes visible as soon as cardData is set & no image yet.
+        startImageGeneration();
         const imgRes = await fetch("/api/demo/image", { method: "POST", headers });
         if (!imgRes.ok) throw new Error(`Image HTTP ${imgRes.status}`);
         const imgBody = (await imgRes.json()) as {
@@ -114,11 +155,16 @@ export default function App() {
         };
         if (imgBody.cardImage?.url) {
           setCardImageSrc(imgBody.cardImage.url);
+          finishImageGeneration("ready");
         } else if (imgBody.cardImage?.base64) {
           setCardImageSrc(`data:image/png;base64,${imgBody.cardImage.base64}`);
+          finishImageGeneration("ready");
+        } else {
+          finishImageGeneration("error", "Demo portrait was not produced.");
         }
       } catch (err) {
         log.error("Demo card load failed", err);
+        finishImageGeneration("error", err instanceof Error ? err.message : "Demo failed");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,6 +180,7 @@ export default function App() {
     }
     setRegenerating(true);
     setCardImageSrc(null);
+    startImageGeneration();
     try {
       const payload = {
         identity: session.identity,
@@ -212,21 +259,29 @@ export default function App() {
       if (body.cardImage?.url) {
         log.info("regenerate ✓ image (url)");
         setCardImageSrc(body.cardImage.url);
+        finishImageGeneration("ready");
       } else if (body.cardImage?.base64) {
         log.info("regenerate ✓ image (base64)", { bytes: body.cardImage.base64.length });
         setCardImageSrc(`data:image/png;base64,${body.cardImage.base64}`);
+        finishImageGeneration("ready");
       } else if (body.cardImageError === "rate_limited") {
         log.warn("regenerate image rate-limited", { retryAfter: body.cardImageRetryAfter });
         const wait = body.cardImageRetryAfter
           ? `Please wait ~${body.cardImageRetryAfter}s and try again.`
           : "Please wait a minute and try again.";
+        finishImageGeneration("error", `Image service is rate-limited. ${wait}`);
         alert(`Image service is rate-limited right now. Card text was regenerated, but the portrait could not be created. ${wait}`);
       } else if (body.cardImageError) {
         log.warn("regenerate image failed", { error: body.cardImageError });
+        finishImageGeneration("error", "Image generation failed. Try regenerating again.");
         alert("Image generation failed. Card text was regenerated. Try again in a moment.");
+      } else {
+        // Card text came back but no image and no explicit error — treat as failure.
+        finishImageGeneration("error", "Portrait was not produced. Try regenerating.");
       }
     } catch (err) {
       log.error("Regenerate failed", err);
+      finishImageGeneration("error", err instanceof Error ? err.message : "Regeneration failed");
       // If we haven't already alerted (i.e. this was a non-HTTP error like network failure), notify the user.
       if (err instanceof Error && !err.message.startsWith("POST /api/regenerate failed")) {
         alert(`Could not regenerate: ${err.message}. Check your connection and try again.`);
@@ -234,7 +289,7 @@ export default function App() {
     } finally {
       setRegenerating(false);
     }
-  }, [session, regenerating, getAuthHeaders, updateSession, setCardImageSrc]);
+  }, [session, regenerating, getAuthHeaders, updateSession, setCardImageSrc, startImageGeneration, finishImageGeneration]);
 
   // Expose for quick manual triggering from devtools.
   useEffect(() => {
@@ -355,13 +410,26 @@ export default function App() {
                   const cd = evt.data as CardData;
                   setCardData(cd);
                   updateSession({ cardData: cd });
+                  // Card text just arrived — backend will produce an image next.
+                  // Begin loading state so the spinner appears (and clears on
+                  // success/error/timeout instead of indefinitely).
+                  if (imageStatus !== "loading") startImageGeneration();
                   break;
                 }
                 case "data-cardImage": {
-                  const img = evt.data as { url?: string; base64?: string };
-                  if (img.url) setCardImageSrc(img.url);
-                  else if (img.base64)
+                  const img = evt.data as { url?: string; base64?: string; error?: string };
+                  if (img.url) {
+                    setCardImageSrc(img.url);
+                    finishImageGeneration("ready");
+                  } else if (img.base64) {
                     setCardImageSrc(`data:image/png;base64,${img.base64}`);
+                    finishImageGeneration("ready");
+                  } else {
+                    finishImageGeneration(
+                      "error",
+                      img.error ? `Portrait failed: ${img.error}` : "Portrait was not produced.",
+                    );
+                  }
                   break;
                 }
                 // text-start / text-end are informational — no action needed
@@ -381,6 +449,8 @@ export default function App() {
             setMessages([]);
             setCardData(null);
             setCardImageSrc(null);
+            finishImageGeneration("ready"); // tear down spinner; ready+null = nothing rendered
+            setImageStatus("idle");
             return;
           }
           handleStateUpdate(receivedStateUpdate, assistantText, text);
@@ -420,11 +490,16 @@ export default function App() {
               : m,
           ),
         );
+        // Stream died — if we'd kicked off an image expectation, mark it failed
+        // so the spinner clears.
+        if (imageStatus === "loading") {
+          finishImageGeneration("error", "Connection lost while generating portrait.");
+        }
       } finally {
         setIsStreaming(false);
       }
     },
-    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData, getAuthHeaders, setCardImageSrc],
+    [session, isStreaming, handleStateUpdate, updateSession, resetSession, cardData, getAuthHeaders, setCardImageSrc, imageStatus, startImageGeneration, finishImageGeneration],
   );
 
   // ── Photo selected in ChatPanel ─────────────────────────────────────────
@@ -522,12 +597,15 @@ export default function App() {
         setMessages(toUIMessages(imported.currentStageMessages));
         setCardData(imported.cardData);
         setCardImageSrc(null);
+        clearImageTimeout();
+        setImageStatus("idle");
+        setImageError(null);
       } catch {
         alert("Failed to parse session file.");
       }
     };
     input.click();
-  }, [updateSession, setCardImageSrc]);
+  }, [updateSession, setCardImageSrc, clearImageTimeout]);
 
   // ── Reset session ───────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -536,7 +614,10 @@ export default function App() {
     setMessages([]);
     setCardData(null);
     setCardImageSrc(null);
-  }, [resetSession, setCardImageSrc]);
+    clearImageTimeout();
+    setImageStatus("idle");
+    setImageError(null);
+  }, [resetSession, setCardImageSrc, clearImageTimeout]);
 
   // ── Customize-look handler ──────────────────────────────────────────────
   const handleCardStyleChange = useCallback(
@@ -668,6 +749,12 @@ export default function App() {
           onPhotoSelected={handlePhotoSelected}
           cardImageSrc={cardImageSrc}
           cardData={cardData}
+          imageStatus={imageStatus}
+          imageError={imageError}
+          onDismissImageError={() => {
+            setImageStatus("idle");
+            setImageError(null);
+          }}
           photoBase64={session.photoBase64}
           getAuthHeaders={getAuthHeaders}
           onPdfProcessingStart={handlePdfProcessingStart}

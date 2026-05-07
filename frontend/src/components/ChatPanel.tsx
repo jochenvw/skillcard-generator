@@ -41,6 +41,9 @@ interface ChatPanelProps {
   onPhotoSelected?: (base64: string) => void;
   cardImageSrc?: string | null;
   cardData?: CardData | null;
+  imageStatus?: "idle" | "loading" | "ready" | "error";
+  imageError?: string | null;
+  onDismissImageError?: () => void;
   photoBase64?: string | null;
   getAuthHeaders?: () => Promise<HeadersInit>;
   onPdfProcessingStart?: (filename: string) => void;
@@ -68,6 +71,9 @@ export function ChatPanel({
   onPhotoSelected,
   cardImageSrc,
   cardData,
+  imageStatus = "idle",
+  imageError,
+  onDismissImageError,
   photoBase64,
   getAuthHeaders,
   onPdfProcessingStart,
@@ -346,7 +352,7 @@ export function ChatPanel({
               {cardData && (
                 <SkillCard data={cardData} photoBase64={photoBase64} />
               )}
-              {cardImageSrc ? (
+              {cardImageSrc && imageStatus !== "loading" ? (
                 <div className="flex flex-col items-center gap-2">
                   <div className="w-[420px] rounded-2xl overflow-hidden border-2 border-violet-500/30 shadow-lg shadow-violet-500/10 skillcard-frame rarity-epic">
                     <img
@@ -359,7 +365,7 @@ export function ChatPanel({
                     ✨ AI-Generated Portrait
                   </span>
                 </div>
-              ) : cardData ? (
+              ) : cardData && imageStatus === "loading" ? (
                 <div className="flex flex-col items-center gap-2">
                   <div className="w-[420px] aspect-[2/3] rounded-2xl border-2 border-violet-500/30 shadow-lg shadow-violet-500/10 skillcard-frame rarity-epic bg-gradient-to-br from-slate-900 via-violet-950/40 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
                     <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_50%_50%,rgba(139,92,246,0.25),transparent_60%)] animate-pulse" />
@@ -369,6 +375,38 @@ export function ChatPanel({
                   </div>
                   <span className="text-[10px] text-violet-400/70 font-mono uppercase tracking-wider">
                     ✨ Forging AI Portrait...
+                  </span>
+                </div>
+              ) : cardData && imageStatus === "error" ? (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-[420px] aspect-[2/3] rounded-2xl border-2 border-red-500/40 bg-gradient-to-br from-slate-900 via-red-950/30 to-slate-900 flex flex-col items-center justify-center p-6 gap-4 text-center">
+                    <span className="text-4xl">🖼️</span>
+                    <p className="text-sm text-red-200/90">
+                      {imageError ?? "Portrait generation failed."}
+                    </p>
+                    <div className="flex gap-2">
+                      {onRegenerateCard && (
+                        <button
+                          type="button"
+                          onClick={onRegenerateCard}
+                          className="px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-xs font-mono uppercase tracking-wider transition"
+                        >
+                          ⟳ Try again
+                        </button>
+                      )}
+                      {onDismissImageError && (
+                        <button
+                          type="button"
+                          onClick={onDismissImageError}
+                          className="px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-mono uppercase tracking-wider transition"
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-red-400/70 font-mono uppercase tracking-wider">
+                    ⚠ Portrait failed
                   </span>
                 </div>
               ) : null}
