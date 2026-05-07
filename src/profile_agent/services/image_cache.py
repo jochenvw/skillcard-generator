@@ -4,7 +4,11 @@ The cache key is a SHA-256 of the exact image-gen inputs (prompt + reference
 photo bytes + deployment name + size). Any change → new key → cache miss →
 re-generation. Cache hits return instantly without calling the model.
 
-Storage: <repo>/.cache/card_images/<sha256>.b64 — plain base64 string (PNG).
+Storage: ``$SKILLCARD_CACHE_DIR/card_images/<sha256>.b64`` if the env var is
+set, otherwise ``<tempdir>/skillcard-cache/card_images/``. We deliberately
+avoid the previous ``parents[3] / .cache`` path because in production the
+package is installed under ``site-packages`` and that path resolves to a
+read-only Python install directory (causing PermissionError on write).
 The directory is created lazily and is gitignored.
 """
 
@@ -12,13 +16,21 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Cache lives at the repo root (3 levels up from this file:
-# src/profile_agent/services/image_cache.py).
-_CACHE_DIR = Path(__file__).resolve().parents[3] / ".cache" / "card_images"
+
+def _resolve_cache_dir() -> Path:
+    override = os.environ.get("SKILLCARD_CACHE_DIR")
+    if override:
+        return Path(override) / "card_images"
+    return Path(tempfile.gettempdir()) / "skillcard-cache" / "card_images"
+
+
+_CACHE_DIR = _resolve_cache_dir()
 
 
 def _key(prompt: str, photo_bytes: bytes | None, deployment: str, size: str) -> str:

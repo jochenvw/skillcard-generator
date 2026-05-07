@@ -6,10 +6,12 @@ endpoint hits OpenAI twice (synthesis + card generation, ~25-30s combined) with
 different cards every time AND incur full LLM cost. This cache short-circuits
 that for byte-identical inputs.
 
-Storage: ``<repo>/.cache/card_text/<sha256>.json`` — single JSON document
-(the cardData dict). The directory is created lazily and is gitignored.
-The cache lives only for the lifetime of the container's filesystem, so a
-restart wipes it — exactly the behaviour the user asked for.
+Storage: ``$SKILLCARD_CACHE_DIR/card_text/<sha256>.json`` if the env var is
+set, otherwise ``<tempdir>/skillcard-cache/card_text/`` (writable in any
+environment, including the production container where site-packages is
+read-only). Single JSON document per entry. The cache lives only for the
+lifetime of the container's filesystem, so a restart wipes it — exactly
+the behaviour the user asked for.
 
 Cache key inputs (must be free of timestamps / random values, audited
 2026-05-07):
@@ -30,13 +32,29 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Same parents-up depth as image_cache.py so both caches sit next to each other.
-_CACHE_DIR = Path(__file__).resolve().parents[3] / ".cache" / "card_text"
+
+def _resolve_cache_dir() -> Path:
+    """Pick a writable cache root.
+
+    In production the package lives under ``site-packages`` (read-only on the
+    container image), so resolving ``parents[3] / .cache`` would point at the
+    Python install dir and fail with PermissionError. We use the env override
+    if set, otherwise the OS temp dir (always writable, container-lifetime).
+    """
+    override = os.environ.get("SKILLCARD_CACHE_DIR")
+    if override:
+        return Path(override) / "card_text"
+    return Path(tempfile.gettempdir()) / "skillcard-cache" / "card_text"
+
+
+_CACHE_DIR = _resolve_cache_dir()
 
 
 def _canonical(value: Any) -> str:
