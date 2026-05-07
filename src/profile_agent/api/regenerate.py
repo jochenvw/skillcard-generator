@@ -94,6 +94,8 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
     synthesis_ms = card_ms = image_ms = 0
     image_outcome = "skipped"
     image_error_type: str | None = None
+    image_error_message: str | None = None
+    current_step = "init"
     client = await _get_openai_client(settings)
 
     try:
@@ -103,6 +105,7 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
             import json as _json
             additional_context = f"Bulk-extracted profile data: {_json.dumps(body.bulk_extracted)}"
 
+        current_step = "synthesis"
         t = time.perf_counter()
         synthesis_json = await _run_synthesis(
             client, settings, completed, [],
@@ -110,6 +113,7 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
         )
         synthesis_ms = int((time.perf_counter() - t) * 1000)
 
+        current_step = "card_generation"
         t = time.perf_counter()
         card_data = await _run_card_generation(
             client,
@@ -126,9 +130,10 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
         card_ms = int((time.perf_counter() - t) * 1000)
     except Exception as exc:
         wide_event(
-            "regenerate.completed",
+            "regenerate.failed",
             outcome="error",
             level=logging.ERROR,
+            failed_step=current_step,
             duration_ms=int((time.perf_counter() - t0) * 1000),
             synthesis_ms=synthesis_ms,
             card_ms=card_ms,
@@ -136,12 +141,22 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
             error_message=str(exc)[:500],
             **base_attrs,
         )
-        logger.exception("Regeneration failed")
-        raise HTTPException(status_code=500, detail=f"Regeneration failed: {exc}") from exc
+        # logger.exception emits an ExceptionTelemetry record (stack trace) into App Insights
+        # via the OpenTelemetry logging instrumentation.
+        logger.exception(
+            "Regeneration failed at step=%s error_type=%s",
+            current_step,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Regeneration failed during {current_step}: {exc}",
+        ) from exc
 
     response: dict = {"cardData": card_data}
 
     if body.includeImage:
+        current_step = "image_generation"
         try:
             from profile_agent.models.llm_contracts import CardStyle
             style: CardStyle | None = None
@@ -168,21 +183,42 @@ async def regenerate(body: RegenerateRequest, user: dict = Depends(get_current_u
             elif img and img.get("error"):
                 response["cardImageError"] = "failed"
                 image_outcome = "failed"
+                image_error_type = str(img.get("error"))[:100]
+                image_error_message = str(img.get("message") or img.get("error"))[:500]
         except Exception as exc:
             image_outcome = "exception"
             image_error_type = type(exc).__name__
+            image_error_message = str(exc)[:500]
             response["cardImageError"] = "image generation failed"
-            logger.exception("Image regeneration failed")
+            wide_event(
+                "regenerate.image.failed",
+                outcome="error",
+                level=logging.ERROR,
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+                image_ms=int((time.perf_counter() - t) * 1000),
+                error_type=image_error_type,
+                error_message=image_error_message,
+                **base_attrs,
+            )
+            logger.exception("Image regeneration failed (text card succeeded)")
+
+    overall_outcome = "ok"
+    overall_level = logging.INFO
+    if image_outcome in ("exception", "failed", "rate_limited"):
+        overall_outcome = "partial"
+        overall_level = logging.WARNING
 
     wide_event(
         "regenerate.completed",
-        outcome="ok",
+        outcome=overall_outcome,
+        level=overall_level,
         duration_ms=int((time.perf_counter() - t0) * 1000),
         synthesis_ms=synthesis_ms,
         card_ms=card_ms,
         image_ms=image_ms,
         image_outcome=image_outcome,
         image_error_type=image_error_type,
+        image_error_message=image_error_message,
         **base_attrs,
     )
     return response
